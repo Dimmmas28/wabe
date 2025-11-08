@@ -1,3 +1,11 @@
+## Getting started
+
+1. Start the evaluation 
+
+   ```bash
+   uv run .
+   ```
+
 ## Quickstart
 1. Clone (or fork) the repo:
 ```
