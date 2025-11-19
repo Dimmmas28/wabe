@@ -1,9 +1,13 @@
+import asyncio
+from venv import logger
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.utils.errors import ServerError
 from a2a.types import (
     InvalidParamsError,
     Task,
+    Part,
+    TextPart,
     TaskState,
     UnsupportedOperationError,
     InternalError,
@@ -26,35 +30,56 @@ class GreenExecutor(AgentExecutor):
         context: RequestContext,
         event_queue: EventQueue,
     ) -> None:
+        if not context.message:
+            raise ValueError("RequestContext must have a message")
+
+        task = context.current_task
+
+        if not task:
+            task = new_task(context.message)
+            logger.info(f"Enqueue event task {task}")
+            await event_queue.enqueue_event(task)
+
+        if not context.context_id or not context.task_id:
+            raise ValueError("RequestContext must have context_id and task_id")
+
         req = self._validate_request(context)
 
-        msg = context.message
-        if msg:
-            task = new_task(msg)
-            await event_queue.enqueue_event(task)
-        else:
-            raise ServerError(error=InvalidParamsError(message="Missing message."))
+        updater = TaskUpdater(event_queue, context.task_id, context.context_id)
+        if not context.current_task:
+            await updater.submit()
+        await updater.start_work()
+        logger.info(f"Run in background")
+        asyncio.create_task(self._run_agent_background(req, updater))
+        # try:
+        #     await self.agent.run_eval(req, updater)
 
-        updater = TaskUpdater(event_queue, task.id, task.context_id)
-        await updater.update_status(
-            TaskState.working,
-            new_agent_text_message(
-                f"Starting assessment.\n{req.model_dump_json()}",
-                context_id=context.context_id,
-            ),
-        )
+        #     await updater.complete()
+        # except Exception as e:
+        #     print(f"Agent error: {e}")
+        #     await updater.failed(
+        #         updater.new_agent_message(
+        #             [Part(root=TextPart(text=f"Agent error: {e}"))]
+        #         )
+        #     )
+        #     raise ServerError(error=InternalError(message=str(e))) from e
 
+    async def _run_agent_background(self, req, updater: TaskUpdater):
+        """Run the actual agent work in background"""
         try:
+            # This is the long-running operation
             await self.agent.run_eval(req, updater)
+
+            # Update status when done
             await updater.complete()
+
         except Exception as e:
             print(f"Agent error: {e}")
             await updater.failed(
-                new_agent_text_message(
-                    f"Agent error: {e}", context_id=context.context_id
+                updater.new_agent_message(
+                    [Part(root=TextPart(text=f"Agent error: {e}"))]
                 )
             )
-            raise ServerError(error=InternalError(message=str(e)))
 
     async def cancel(
         self, request: RequestContext, event_queue: EventQueue

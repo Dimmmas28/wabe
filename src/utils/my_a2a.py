@@ -14,6 +14,9 @@ from a2a.types import (
     Role,
     SendMessageRequest,
     SendMessageResponse,
+    GetTaskRequest,
+    TaskQueryParams,
+    GetTaskResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,6 +64,37 @@ async def send_message(
     async with httpx.AsyncClient() as httpx_client:
         card = await get_agent_card(url, httpx_client)
         client = A2AClient(httpx_client=httpx_client, agent_card=card)
+
+        message_id = uuid.uuid4().hex
+        params = MessageSendParams(
+            message=Message(
+                role=Role.user,
+                parts=[Part(TextPart(text=message))],
+                message_id=message_id,
+                task_id=task_id,
+                context_id=context_id,
+            )
+        )
+        request_id = uuid.uuid4().hex
+        request = SendMessageRequest(id=request_id, params=params)
+        response = await client.send_message(request)
+        return response
+
+
+async def send_task(
+    url: str, message: str, task_id: str, context_id: str | None = None
+) -> GetTaskResponse:
+    async with httpx.AsyncClient() as httpx_client:
+        card = await get_agent_card(url, httpx_client)
+        client = A2AClient(httpx_client=httpx_client, agent_card=card)
+
+        # Get task status
+        request = GetTaskRequest(
+            id=uuid.uuid4().hex, params=TaskQueryParams(id=task_id)
+        )
+
+        response = await client.get_task(request)
+        return response
 
         message_id = uuid.uuid4().hex
         params = MessageSendParams(

@@ -2,6 +2,7 @@ import logging
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
+from dotenv import load_dotenv
 import uvicorn
 
 from utils.common_utils import build_url
@@ -9,7 +10,33 @@ from white_agent.a2a.agent_card import prepare_agent_card
 from white_agent.a2a.agent_executor import WhiteAgentExecutor
 from white_agent.default_agent import DefaultWhiteAgent
 
+load_dotenv()
+
 logger = logging.getLogger(__name__)
+
+
+# Custom uvicorn log config that uses your existing handlers
+log_config = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "default": {
+            "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        },
+    },
+    "handlers": {
+        "default": {
+            "formatter": "default",
+            "class": "logging.StreamHandler",
+            "stream": "ext://sys.stderr",
+        },
+    },
+    "loggers": {
+        "uvicorn": {"handlers": ["default"], "level": "INFO"},
+        "uvicorn.error": {"level": "INFO"},
+        "uvicorn.access": {"handlers": ["default"], "level": "INFO"},
+    },
+}
 
 
 def start_white_agent(host: str, port: int, secure: bool = False):
@@ -27,4 +54,4 @@ def start_white_agent(host: str, port: int, secure: bool = False):
         http_handler=request_handler,
     )
 
-    uvicorn.run(server.build(), host=host, port=port)
+    uvicorn.run(server.build(), host=host, port=port, log_config=log_config)

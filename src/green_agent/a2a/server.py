@@ -11,6 +11,29 @@ from utils.common_utils import build_url
 
 logger = logging.getLogger(__name__)
 
+# Custom uvicorn log config that uses your existing handlers
+log_config = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "default": {
+            "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        },
+    },
+    "handlers": {
+        "default": {
+            "formatter": "default",
+            "class": "logging.StreamHandler",
+            "stream": "ext://sys.stderr",
+        },
+    },
+    "loggers": {
+        "uvicorn": {"handlers": ["default"], "level": "INFO"},
+        "uvicorn.error": {"level": "INFO"},
+        "uvicorn.access": {"handlers": ["default"], "level": "INFO"},
+    },
+}
+
 
 def start_green_agent(host: str, port: int):
     logger.info("Starting green agent...")
@@ -27,4 +50,4 @@ def start_green_agent(host: str, port: int):
         http_handler=request_handler,
     )
 
-    uvicorn.run(app.build(), host=host, port=port)
+    uvicorn.run(app.build(), host=host, port=port, log_config=log_config)

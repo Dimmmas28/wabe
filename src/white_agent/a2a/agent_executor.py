@@ -1,7 +1,10 @@
+import logging
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.utils import new_agent_text_message
 from white_agent.agent import WhiteAgent
+
+logger = logging.getLogger(__name__)
 
 
 class WhiteAgentExecutor(AgentExecutor):
@@ -14,6 +17,7 @@ class WhiteAgentExecutor(AgentExecutor):
         event_queue: EventQueue,
     ) -> None:
         user_input = context.get_user_input()
+        logger.info(f"TASK: {user_input}")
         result = await self.agent.invoke(user_input)
         await event_queue.enqueue_event(new_agent_text_message(result))
 
