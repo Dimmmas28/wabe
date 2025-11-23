@@ -14,7 +14,7 @@ def parse_white_agent_response(response_text: str) -> Dict[str, Any]:
     Parse white agent response to extract action.
 
     Supports two formats:
-    
+
     1. JSON format:
        <json>
        {

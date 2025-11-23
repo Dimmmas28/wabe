@@ -1,6 +1,5 @@
 import base64
 import io
-
 # from openai import APIConnectionError, APIError, RateLimitError, AzureOpenAI, OpenAI
 import os
 
@@ -81,9 +80,9 @@ class OpenaiEngine:
             rate_limit (int, optional): Max number of requests per minute. Defaults to -1.
             model (_type_, optional): Model family. Defaults to None.
         """
-        assert os.getenv("OPENAI_API_KEY", api_key) is not None, (
-            "must pass on the api_key or set OPENAI_API_KEY in the environment"
-        )
+        assert (
+            os.getenv("OPENAI_API_KEY", api_key) is not None
+        ), "must pass on the api_key or set OPENAI_API_KEY in the environment"
         if api_key is None:
             api_key = os.getenv("OPENAI_API_KEY", api_key)
         if isinstance(api_key, str):

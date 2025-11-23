@@ -5,7 +5,9 @@ class ToolProvider:
     def __init__(self):
         self._context_ids = {}
 
-    async def talk_to_agent(self, message: str, url: str, new_conversation: bool = False):
+    async def talk_to_agent(
+        self, message: str, url: str, new_conversation: bool = False
+    ):
         """
         Communicate with another agent by sending a message and receiving their response.
 
@@ -17,7 +19,11 @@ class ToolProvider:
         Returns:
             str: The agent's response message
         """
-        outputs = await send_message(message=message, base_url=url, context_id=None if new_conversation else self._context_ids.get(url, None))
+        outputs = await send_message(
+            message=message,
+            base_url=url,
+            context_id=None if new_conversation else self._context_ids.get(url, None),
+        )
         if outputs.get("status", "completed") != "completed":
             raise RuntimeError(f"{url} responded with: {outputs}")
         self._context_ids[url] = outputs.get("context_id", None)

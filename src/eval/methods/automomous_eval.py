@@ -1,5 +1,6 @@
-from eval.utils import encode_image
 from PIL import Image
+
+from eval.utils import encode_image
 
 
 def Autonomous_eval(task, last_actions, images_path):

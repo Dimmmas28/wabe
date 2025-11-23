@@ -25,13 +25,15 @@ dependencies = [
 
 [project.scripts]
 agentbeats-run = "agentbeats.run_scenario:main"
-dev = "green_agent.main:main"
 
 [tool.uv]
 package = true
 dev-dependencies = [
+    "black>=24.0.0",
+    "isort>=5.13.0",
     "mypy>=1.18.1",
+    "pytest>=8.0.0",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agentbeats", "src/green_agent", "src/white_agent", "src/utils"]
+packages = ["src/agentbeats", "src/shared", "src/utils"]

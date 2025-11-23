@@ -1,16 +1,14 @@
 import asyncio
 import json
-from datetime import datetime
 import logging
+from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional
-from playwright.async_api import async_playwright, Page, Browser
+from typing import Any, Dict, List, Optional
 
-from green_agent.task_execution.utils.browser_helper import (
-    normal_launch_async,
-    normal_new_context_async,
-)
-from green_agent.task_execution.utils.html_cleaner import HTMLCleaner
+from playwright.async_api import Browser, Page, async_playwright
+
+from shared.browser_helper import normal_launch_async, normal_new_context_async
+from shared.html_cleaner import HTMLCleaner
 
 logger = logging.getLogger(__name__)
 

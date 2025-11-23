@@ -1,23 +1,16 @@
-import sys
-import json
 import asyncio
+import json
+import sys
+import tomllib
 from pathlib import Path
 from typing import Any, Dict
 
-import tomllib
+from a2a.types import (AgentCard, DataPart, Message, Part,
+                       TaskArtifactUpdateEvent, TaskState,
+                       TaskStatusUpdateEvent, TextPart)
 
 from agentbeats.client import send_message
 from agentbeats.models import EvalRequest
-from a2a.types import (
-    AgentCard,
-    Message,
-    TaskStatusUpdateEvent,
-    TaskArtifactUpdateEvent,
-    TaskState,
-    Part,
-    TextPart,
-    DataPart,
-)
 
 
 def parse_toml(d: dict[str, object]) -> tuple[EvalRequest, str]:
@@ -36,11 +29,9 @@ def parse_toml(d: dict[str, object]) -> tuple[EvalRequest, str]:
             if role and endpoint:
                 parts[role] = endpoint
 
-    eval_req = EvalRequest(
-        participants=parts,
-        config=d.get("config", {}) or {}
-    )
+    eval_req = EvalRequest(participants=parts, config=d.get("config", {}) or {})
     return eval_req, green_endpoint
+
 
 def print_parts(parts, task_state: str | None = None):
     text_parts = []
@@ -66,6 +57,7 @@ def print_parts(parts, task_state: str | None = None):
 
     print("\n".join(output) + "\n")
 
+
 async def event_consumer(event, card: AgentCard):
     match event:
         case Message() as msg:
@@ -88,6 +80,7 @@ async def event_consumer(event, card: AgentCard):
 
         case _:
             print("Unhandled event")
+
 
 async def main():
     if len(sys.argv) < 2:

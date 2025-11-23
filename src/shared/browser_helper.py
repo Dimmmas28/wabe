@@ -1,9 +1,6 @@
-from playwright.async_api._generated import Playwright as AsyncPlaywright
-
+from playwright._impl._api_structures import ViewportSize
 from playwright.async_api import Browser
-from playwright._impl._api_structures import (
-    ViewportSize,
-)
+from playwright.async_api._generated import Playwright as AsyncPlaywright
 
 
 async def normal_launch_async(playwright: AsyncPlaywright, headless=False, args=None):

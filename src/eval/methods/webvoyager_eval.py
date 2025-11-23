@@ -1,5 +1,6 @@
-from eval.utils import encode_image
 from PIL import Image
+
+from eval.utils import encode_image
 
 MAX_IMAGE = 50
 

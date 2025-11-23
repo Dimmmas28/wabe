@@ -56,7 +56,6 @@ WABE follows the [AgentBeats](https://github.com/google/agentbeats) evaluation f
 - Sends HTML + task description to white agent via A2A protocol
 - Executes actions received from white agent
 - Evaluates task completion
-- **Reuses existing code**: `BrowserAgent` (529 lines) from `src/green_agent/task_execution/`
 
 **White Agent (Participant)** - `scenarios/web_browser/white_agent.py`
 - Receives HTML and task via A2A protocol
@@ -317,9 +316,56 @@ task_id = "unique_id"
 - **White agent prompts**: Edit `scenarios/web_browser/white_agent.py`
 - **Browser automation**: Modify `src/green_agent/task_execution/browser_agent.py`
 
-## Next Steps
+### Development Scripts
 
-See `wabe_implementation_todo.md` for planned improvements and cleanup tasks.
+The `scripts/` directory contains shell scripts for code quality and testing:
+
+#### Formatting Code
+
+**Format code automatically:**
+```bash
+./scripts/format.sh
+```
+Runs `black` and `isort` to automatically format all Python code.
+
+**Check formatting (without changes):**
+```bash
+./scripts/check-format.sh
+```
+Verifies code formatting without making changes. Useful for CI/CD or pre-commit hooks.
+
+#### Running Tests
+
+**Run all tests:**
+```bash
+./scripts/test.sh
+```
+
+**Run specific tests:**
+```bash
+./scripts/test.sh -v -k test_browser
+./scripts/test.sh tests/specific_test.py
+```
+
+#### Quality Checks
+
+**Run all quality checks:**
+```bash
+./scripts/quality-check.sh
+```
+Runs tests, code formatting checks, and import sorting checks in sequence. Exits on first failure.
+
+#### Before Committing
+
+Run quality checks to ensure code meets project standards:
+```bash
+./scripts/quality-check.sh
+```
+
+Or format code first, then run checks:
+```bash
+./scripts/format.sh && ./scripts/quality-check.sh
+```
 
 ## License
 

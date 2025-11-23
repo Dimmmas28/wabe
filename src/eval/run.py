@@ -1,15 +1,16 @@
 import argparse
+import asyncio
+import copy
+import json
+import multiprocessing
 import os
+
 from eval.methods.agenttrek_eval import *
 from eval.methods.automomous_eval import *
 from eval.methods.webjudge_general_eval import *
 from eval.methods.webjudge_online_mind2web import *
 from eval.methods.webvoyager_eval import *
 from eval.utils import OpenaiEngine, extract_predication
-import json
-import copy
-import asyncio
-import multiprocessing
 
 
 def auto_eval(args, task_subset, final_predicted_labels, lock, model):

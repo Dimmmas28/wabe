@@ -3,32 +3,23 @@ import logging
 from uuid import uuid4
 
 import httpx
-from a2a.client import (
-    A2ACardResolver,
-    ClientConfig,
-    ClientFactory,
-    Consumer,
-)
-from a2a.types import (
-    Message,
-    Part,
-    Role,
-    TextPart,
-    DataPart,
-)
-
+from a2a.client import A2ACardResolver, ClientConfig, ClientFactory, Consumer
+from a2a.types import DataPart, Message, Part, Role, TextPart
 
 DEFAULT_TIMEOUT = 300
 
 
-def create_message(*, role: Role = Role.user, text: str, context_id: str | None = None) -> Message:
+def create_message(
+    *, role: Role = Role.user, text: str, context_id: str | None = None
+) -> Message:
     return Message(
         kind="message",
         role=role,
         parts=[Part(TextPart(kind="text", text=text))],
         message_id=uuid4().hex,
-        context_id=context_id
+        context_id=context_id,
     )
+
 
 def merge_parts(parts: list[Part]) -> str:
     chunks = []
@@ -39,7 +30,14 @@ def merge_parts(parts: list[Part]) -> str:
             chunks.append(part.root.data)
     return "\n".join(chunks)
 
-async def send_message(message: str, base_url: str, context_id: str | None = None, streaming=False, consumer: Consumer | None = None):
+
+async def send_message(
+    message: str,
+    base_url: str,
+    context_id: str | None = None,
+    streaming=False,
+    consumer: Consumer | None = None,
+):
     """Returns dict with context_id, response and status (if exists)"""
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as httpx_client:
         resolver = A2ACardResolver(httpx_client=httpx_client, base_url=base_url)
@@ -55,10 +53,7 @@ async def send_message(message: str, base_url: str, context_id: str | None = Non
 
         outbound_msg = create_message(text=message, context_id=context_id)
         last_event = None
-        outputs = {
-            "response": "",
-            "context_id": None
-        }
+        outputs = {"response": "", "context_id": None}
 
         # if streaming == False, only one event is generated
         async for event in client.send_message(outbound_msg):

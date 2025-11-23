@@ -1,21 +1,13 @@
 from abc import abstractmethod
-from pydantic import ValidationError
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
-from a2a.types import (
-    InvalidParamsError,
-    Task,
-    TaskState,
-    UnsupportedOperationError,
-    InternalError,
-)
-from a2a.utils import (
-    new_agent_text_message,
-    new_task,
-)
+from a2a.types import (InternalError, InvalidParamsError, Task, TaskState,
+                       UnsupportedOperationError)
+from a2a.utils import new_agent_text_message, new_task
 from a2a.utils.errors import ServerError
+from pydantic import ValidationError
 
 from agentbeats.models import EvalRequest
 
@@ -60,7 +52,10 @@ class GreenExecutor(AgentExecutor):
         updater = TaskUpdater(event_queue, task.id, task.context_id)
         await updater.update_status(
             TaskState.working,
-            new_agent_text_message(f"Starting assessment.\n{req.model_dump_json()}", context_id=context.context_id)
+            new_agent_text_message(
+                f"Starting assessment.\n{req.model_dump_json()}",
+                context_id=context.context_id,
+            ),
         )
 
         try:
@@ -68,7 +63,11 @@ class GreenExecutor(AgentExecutor):
             await updater.complete()
         except Exception as e:
             print(f"Agent error: {e}")
-            await updater.failed(new_agent_text_message(f"Agent error: {e}", context_id=context.context_id))
+            await updater.failed(
+                new_agent_text_message(
+                    f"Agent error: {e}", context_id=context.context_id
+                )
+            )
             raise ServerError(error=InternalError(message=str(e)))
 
     async def cancel(
