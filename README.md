@@ -328,11 +328,11 @@ The `scripts/` directory contains shell scripts for code quality and testing:
 ```
 Runs `black` and `isort` to automatically format all Python code.
 
-**Check formatting (without changes):**
+**Check formatting:**
 ```bash
 ./scripts/check-format.sh
 ```
-Verifies code formatting without making changes. Useful for CI/CD or pre-commit hooks.
+Verifies code formatting without making changes. (Useful for CI/CD or pre-commit hooks).
 
 #### Running Tests
 
