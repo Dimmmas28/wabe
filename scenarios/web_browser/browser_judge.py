@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import contextlib
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -113,8 +114,11 @@ class BrowserJudge(GreenAgent):
         )
 
         # Initialize browser agent
+        # Use headless mode in Docker (when HEADLESS env var is set)
+        # Default to False for local development to see browser
+        headless = os.getenv("HEADLESS", "false").lower() in ("true", "1", "yes")
         browser_agent = BrowserAgent(
-            headless=False, output_dir=f".output/browser_eval_{task_id}"
+            headless=headless, output_dir=f".output/browser_eval_{task_id}"
         )
 
         success = False

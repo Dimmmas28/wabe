@@ -936,12 +936,12 @@ async def main():
 ```toml
 [green_agent]
 endpoint = "http://127.0.0.1:9009"
-cmd = "python scenarios/web_browser/browser_judge.py --host 127.0.0.1 --port 9009"
+cmd = "uv run python scenarios/web_browser/browser_judge.py --host 127.0.0.1 --port 9009"
 
 [[participants]]
 role = "white_agent"
 endpoint = "http://127.0.0.1:9019"
-cmd = "python scenarios/web_browser/white_agent.py --host 127.0.0.1 --port 9019"
+cmd = "uv run python scenarios/web_browser/white_agent.py --host 127.0.0.1 --port 9019"
 
 [config]
 task_id = "20a460a8fe1971b84411c5b1e6ac4186"

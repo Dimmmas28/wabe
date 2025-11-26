@@ -4,6 +4,8 @@ A browser automation benchmark using the AgentBeats framework. WABE evaluates AI
 
 ## Quick Start
 
+> **Docker Users**: See [Docker Usage](#docker-usage) section for containerized setup.
+
 ### Prerequisites
 
 - Python 3.10+
@@ -43,6 +45,121 @@ That's it! The system will:
 3. Execute the browser automation task
 4. Save results to `.output/` directory
 5. Shut down cleanly when complete
+
+## Docker Usage
+
+### Prerequisites
+
+- Docker installed ([Get Docker](https://docs.docker.com/get-docker/))
+- Google API key ([Get API key](https://aistudio.google.com/app/apikey))
+
+### Quick Start (Recommended)
+
+**Using the Python script (easiest):**
+
+```bash
+# 1. Create .env file with your API key
+echo "GOOGLE_API_KEY=your_api_key_here" > .env
+
+# 2. Run everything with one command
+python run-docker.py
+```
+
+The script will automatically:
+- Build the Docker image (if needed)
+- Validate your API key
+- Run the evaluation with proper volume mounts
+- Show results location
+
+**Options:**
+```bash
+python run-docker.py --build         # Force rebuild image
+python run-docker.py --show-logs     # Show live logs
+python run-docker.py --build-only    # Just build, don't run
+python run-docker.py --help          # See all options
+```
+
+**Using Makefile (alternative):**
+
+```bash
+make docker-build    # Build the image
+make docker-run      # Run evaluation
+make docker-logs     # Run with live logs
+make help           # Show all commands
+```
+
+### Manual Docker Commands
+
+If you prefer to use Docker directly:
+
+**Build the image:**
+```bash
+docker build -t wabe:latest .
+```
+
+**Run evaluation:**
+```bash
+# Create .env file first
+echo "GOOGLE_API_KEY=your_api_key_here" > .env
+
+# Run with env file
+docker run --rm \
+  --env-file .env \
+  -v $(pwd)/.output:/app/.output \
+  -v $(pwd)/.logs:/app/.logs \
+  wabe:latest
+```
+
+**Run with live logs:**
+```bash
+docker run --rm \
+  --env-file .env \
+  -v $(pwd)/.output:/app/.output \
+  -v $(pwd)/.logs:/app/.logs \
+  wabe:latest \
+  uv run agentbeats-run scenarios/web_browser/scenario.toml --show-logs
+```
+
+### Output Files
+
+After running, results are available in:
+- `.output/browser_eval_*/` - Evaluation results and screenshots
+- `.logs/` - Agent logs with timestamps
+
+### Docker Command Reference
+
+| Method | Command | Description |
+|--------|---------|-------------|
+| **Python Script** | `python run-docker.py` | Build and run (recommended) |
+| | `python run-docker.py --show-logs` | Run with live logs |
+| | `python run-docker.py --build` | Force rebuild |
+| **Makefile** | `make docker-run` | Run evaluation |
+| | `make docker-logs` | Run with live logs |
+| | `make docker-build` | Build image only |
+| **Docker CLI** | `docker build -t wabe .` | Build manually |
+| | `docker run --rm --env-file .env wabe` | Run manually |
+
+### Troubleshooting Docker
+
+**API key not working:**
+Ensure your `.env` file or `-e` flag has the correct format:
+```bash
+GOOGLE_API_KEY=AIza...your_key_here
+```
+
+**Port already in use:**
+```bash
+# Check if ports 9009 or 9019 are in use
+docker ps
+# Stop conflicting containers
+docker stop <container_id>
+```
+
+**Out of disk space:**
+```bash
+# Clean up unused Docker resources
+docker system prune -a
+```
 
 ## Architecture
 
