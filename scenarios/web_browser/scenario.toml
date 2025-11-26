@@ -11,5 +11,5 @@ cmd = "python scenarios/web_browser/white_agent.py --host 127.0.0.1 --port 9019"
 task_id = "20a460a8fe1971b84411c5b1e6ac4186"
 website = "https://www.stubhub.com/"
 task = "Show theatre events for Las Vegas and select one."
-max_steps = 10
+max_steps = 3
 level = "easy"

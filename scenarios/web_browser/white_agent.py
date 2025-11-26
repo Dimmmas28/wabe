@@ -52,30 +52,10 @@ def main():
     # Reusing the same model and instruction pattern from src/white_agent/default_agent.py
     root_agent = Agent(
         name="browser_agent",
-        model="gemini-2.0-flash-exp",  # Using flash model for faster responses
+        model="gemini-2.5-flash",  # Using flash model for faster responses
         description="A web browser navigation agent that helps complete web tasks.",
         instruction="""You are a helpful web automation agent.
 Your task is to help complete web navigation and interaction tasks.
-
-When given a task, you should:
-1. Think about what actions are needed
-2. Respond with your reasoning and the specific action to take
-3. Use the tools provided to interact with the web page
-
-Always respond in the following JSON format:
-{
-    "thought": "your reasoning about what to do",
-    "tool": "tool_name",
-    "params": {"param": "value"}
-}
-
-Available tools:
-- click: Click an element (params: {"selector": "css_selector"})
-- type: Type text into an input (params: {"selector": "css_selector", "text": "text_to_type"})
-- select: Select an option from dropdown (params: {"selector": "css_selector", "value": "option_value"})
-- scroll: Scroll the page (params: {"direction": "up|down"})
-- wait: Wait for element (params: {"selector": "css_selector"})
-- finish: Mark task as complete (params: {"success": true|false, "message": "completion message"})
 
 You will receive messages with:
 - HTML: The current page HTML

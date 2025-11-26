@@ -168,6 +168,12 @@ CURRENT PAGE STATE:
                 step_count = step + 1
                 logger.info(f"Starting step {step_count}/{max_steps}")
 
+                # Add delay between steps to avoid rate limiting (except first step)
+                if step > 0:
+                    delay = 2  # 2 second delay between steps
+                    logger.info(f"Waiting {delay}s before next step to avoid rate limits...")
+                    await asyncio.sleep(delay)
+
                 await updater.update_status(
                     TaskState.working,
                     new_agent_text_message(f"Executing step {step_count}/{max_steps}"),
