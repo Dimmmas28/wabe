@@ -10,8 +10,14 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "a2a-sdk>=0.3.5",
+    "beautifulsoup4>=4.14.2",
     "google-adk>=1.14.1",
     "google-genai>=1.36.0",
+    "langchain>=1.0.5",
+    "langchain-google-genai>=3.0.2",
+    "langchain-openai>=1.0.2",
+    "pillow>=12.0.0",
+    "playwright>=1.55.0",
     "pydantic>=2.11.9",
     "python-dotenv>=1.1.1",
     "uvicorn>=0.35.0",
@@ -23,8 +29,11 @@ agentbeats-run = "agentbeats.run_scenario:main"
 [tool.uv]
 package = true
 dev-dependencies = [
+    "black>=24.0.0",
+    "isort>=5.13.0",
     "mypy>=1.18.1",
+    "pytest>=8.0.0",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agentbeats"]
+packages = ["src/agentbeats", "src/shared", "src/utils"]

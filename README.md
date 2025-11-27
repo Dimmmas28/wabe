@@ -1,239 +1,493 @@
-## Quickstart
-1. Clone (or fork) the repo:
-```
-git clone git@github.com:agentbeats/tutorial
-cd agentbeats-tutorial
-```
-2. Install dependencies
-```
+# WABE - Web Agent Browser Evaluation
+
+A browser automation benchmark using the AgentBeats framework. WABE evaluates AI agents on their ability to navigate websites and complete realistic web tasks using the A2A (Agent-to-Agent) protocol.
+
+## Quick Start
+
+> **Docker Users**: See [Docker Usage](#docker-usage) section for containerized setup.
+
+### Prerequisites
+
+- Python 3.10+
+- [uv](https://github.com/astral-sh/uv) package manager
+- Google API key (for Gemini model)
+- Playwright browsers
+
+### Installation
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd wabe
+
+# Install dependencies
 uv sync
-```
-3. Set environment variables
-```
-cp sample.env .env
-```
-Add your Google API key to the .env file
 
-4. Run the [debate example](#example)
+# Install Playwright browsers
+playwright install
+
+# Set up environment variables
+cp .env.example .env
+# Edit .env and add your GOOGLE_API_KEY
 ```
-uv run agentbeats-run scenarios/debate/scenario.toml
+
+### Running WABE
+
+Run the complete evaluation with a single command:
+
+```bash
+uv run agentbeats-run scenarios/web_browser/scenario.toml
 ```
-This command will:
-- Start the agent servers using the commands specified in scenario.toml
-- Construct an `assessment_request` message containing the participant's role-endpoint mapping and the assessment config
-- Send the `assessment_request` to the green agent and print streamed responses
 
-**Note:** Use `--show-logs` to see agent outputs during the assessment, and `--serve-only` to start agents without running the assessment.
+That's it! The system will:
+1. Start the green agent (browser judge) on port 9009
+2. Start the white agent (web automation) on port 9019
+3. Execute the browser automation task
+4. Save results to `.output/` directory
+5. Shut down cleanly when complete
 
-To run this example manually, start the agent servers in separate terminals, and then in another terminal run the A2A client on the scenario.toml file to initiate the assessment.
+## Docker Usage
 
-After running, you should see an output similar to this.
+### Prerequisites
 
-![Sample output](assets/sample_output.png)
+- Docker installed ([Get Docker](https://docs.docker.com/get-docker/))
+- Google API key ([Get API key](https://aistudio.google.com/app/apikey))
+
+### Quick Start (Recommended)
+
+**Using the Python script (easiest):**
+
+```bash
+# 1. Create .env file with your API key
+echo "GOOGLE_API_KEY=your_api_key_here" > .env
+
+# 2. Run everything with one command
+python run-docker.py
+```
+
+The script will automatically:
+- Build the Docker image (if needed)
+- Validate your API key
+- Run the evaluation with proper volume mounts
+- Show results location
+
+**Options:**
+```bash
+python run-docker.py --build         # Force rebuild image
+python run-docker.py --show-logs     # Show live logs
+python run-docker.py --build-only    # Just build, don't run
+python run-docker.py --help          # See all options
+```
+
+**Using Makefile (alternative):**
+
+```bash
+make docker-build    # Build the image
+make docker-run      # Run evaluation
+make docker-logs     # Run with live logs
+make help           # Show all commands
+```
+
+### Manual Docker Commands
+
+If you prefer to use Docker directly:
+
+**Build the image:**
+```bash
+docker build -t wabe:latest .
+```
+
+**Run evaluation:**
+```bash
+# Create .env file first
+echo "GOOGLE_API_KEY=your_api_key_here" > .env
+
+# Run with env file
+docker run --rm \
+  --env-file .env \
+  -v $(pwd)/.output:/app/.output \
+  -v $(pwd)/.logs:/app/.logs \
+  wabe:latest
+```
+
+**Run with live logs:**
+```bash
+docker run --rm \
+  --env-file .env \
+  -v $(pwd)/.output:/app/.output \
+  -v $(pwd)/.logs:/app/.logs \
+  wabe:latest \
+  uv run agentbeats-run scenarios/web_browser/scenario.toml --show-logs
+```
+
+### Output Files
+
+After running, results are available in:
+- `.output/browser_eval_*/` - Evaluation results and screenshots
+- `.logs/` - Agent logs with timestamps
+
+### Docker Command Reference
+
+| Method | Command | Description |
+|--------|---------|-------------|
+| **Python Script** | `python run-docker.py` | Build and run (recommended) |
+| | `python run-docker.py --show-logs` | Run with live logs |
+| | `python run-docker.py --build` | Force rebuild |
+| **Makefile** | `make docker-run` | Run evaluation |
+| | `make docker-logs` | Run with live logs |
+| | `make docker-build` | Build image only |
+| **Docker CLI** | `docker build -t wabe .` | Build manually |
+| | `docker run --rm --env-file .env wabe` | Run manually |
+
+### Troubleshooting Docker
+
+**API key not working:**
+Ensure your `.env` file or `-e` flag has the correct format:
+```bash
+GOOGLE_API_KEY=AIza...your_key_here
+```
+
+**Port already in use:**
+```bash
+# Check if ports 9009 or 9019 are in use
+docker ps
+# Stop conflicting containers
+docker stop <container_id>
+```
+
+**Out of disk space:**
+```bash
+# Clean up unused Docker resources
+docker system prune -a
+```
+
+## Architecture
+
+WABE follows the [AgentBeats](https://github.com/google/agentbeats) evaluation framework pattern:
+
+### Components
+
+**Green Agent (Judge)** - `scenarios/web_browser/browser_judge.py`
+- Orchestrates browser automation evaluation
+- Manages Playwright browser instance
+- Sends HTML + task description to white agent via A2A protocol
+- Executes actions received from white agent
+- Evaluates task completion
+
+**White Agent (Participant)** - `scenarios/web_browser/white_agent.py`
+- Receives HTML and task via A2A protocol
+- Uses Google Gemini 2.0 Flash (`gemini-2.0-flash-exp`) to reason about actions
+- Returns structured JSON actions (click, type, select, scroll, wait, finish)
+- Built with Google ADK (Agent Development Kit)
+
+**A2A Protocol**
+- Standardized agent-to-agent communication
+- JSON-based message passing
+- Agent cards for capability discovery
+- Task and artifact management
+
+### Data Flow
+
+```
+1. AgentBeats loads scenario.toml configuration
+2. Green agent opens browser → navigates to target website
+3. Green agent extracts HTML → sends to white agent
+4. White agent (LLM) analyzes HTML + task → returns action
+5. Green agent executes action in browser
+6. Repeat steps 3-5 until task complete or max steps reached
+7. Green agent evaluates result → creates artifact
+```
+
+## Environment Setup
+
+### Required Environment Variables
+
+Create a `.env` file (copy from `.env.example`):
+
+```bash
+# Use standard Google AI API (not Vertex AI)
+GOOGLE_GENAI_USE_VERTEXAI=FALSE
+
+# Your Google API key for Gemini models
+# Get one at: https://aistudio.google.com/app/apikey
+GOOGLE_API_KEY=your_api_key_here
+```
+
+### Optional Configuration
+
+Edit `scenarios/web_browser/scenario.toml` to customize:
+
+```toml
+[config]
+task_id = "20a460a8fe1971b84411c5b1e6ac4186"  # Task from data/tasks.json
+max_steps = 10                                 # Maximum interaction steps
+```
+
+## Output Structure
+
+After running an evaluation, outputs are saved to:
+
+```
+.output/
+└── browser_eval_{task_id}/
+    ├── {task_id}.json      # Evaluation results and metadata
+    └── initial.png         # Screenshot(s) of browser state
+```
+
+### Example Output JSON
+
+```json
+{
+  "task_id": "20a460a8fe1971b84411c5b1e6ac4186",
+  "task": "Show theatre events for Las Vegas and select one.",
+  "final_result_response": "Task failed after 1 steps",
+  "action_history": [],
+  "thoughts": [],
+  "screenshots": [".output/browser_eval_.../initial.png"],
+  "metadata": {
+    "timestamp": "2025-11-23T10:56:15.079038",
+    "total_steps": 0,
+    "final_url": "https://www.stubhub.com/"
+  }
+}
+```
+
+## Reading Logs
+
+### Real-time Logs
+
+Use the `--show-logs` flag to see live output:
+
+```bash
+uv run agentbeats-run scenarios/web_browser/scenario.toml --show-logs
+```
+
+This displays real-time logs from both agents as they communicate.
+
+### Log Files
+
+Logs are saved to `.logs/` directory with timestamps:
+
+```
+.logs/
+├── 2025-11-19_20-23-13_green.log   # Green agent logs
+├── 2025-11-19_20-23-27_white.log   # White agent logs
+└── 2025-11-19_20-23-38_app.log     # Main application logs
+```
+
+### Example Log Output
+
+**Green Agent Log** (`.logs/YYYY-MM-DD_HH-MM-SS_green.log`):
+```
+2025-11-19 20:23:38,225 - green_agent.default_agent - INFO - ============================================================
+2025-11-19 20:23:38,225 - green_agent.default_agent - INFO - STARTING TASK EVALUATION
+2025-11-19 20:23:38,225 - green_agent.default_agent - INFO - Task ID: 20a460a8fe1971b84411c5b1e6ac4186
+2025-11-19 20:23:38,225 - green_agent.default_agent - INFO - Task: Show theatre events for Las Vegas and select one.
+2025-11-19 20:23:38,225 - green_agent.default_agent - INFO - Website: https://www.stubhub.com/
+2025-11-19 20:24:02,602 - green_agent.default_agent - INFO - STEP 1/10
+2025-11-19 20:24:03,500 - green_agent.utils.a2a_client - INFO - → GREEN AGENT: Sending to white agent...
+```
+
+**White Agent Log** (`.logs/YYYY-MM-DD_HH-MM-SS_white.log`):
+```
+2025-11-19 20:23:27,312 - uvicorn.error - INFO - Application startup complete.
+2025-11-19 20:23:27,314 - uvicorn.error - INFO - Uvicorn running on http://localhost:9002 (Press CTRL+C to quit)
+2025-11-19 20:24:03,561 - white_agent.a2a.agent_executor - INFO - TASK: Show theatre events for Las Vegas and select one.
+```
+
+### What to Look For
+
+- **Green agent startup**: `Uvicorn running on http://localhost:9009`
+- **White agent startup**: `Uvicorn running on http://localhost:9019`
+- **Task submission**: `STARTING TASK EVALUATION`
+- **A2A communication**: `→ GREEN AGENT: Sending to white agent...`
+- **Actions executed**: Look for tool calls (click, type, etc.)
+- **Errors**: Search for `ERROR` or `RESOURCE_EXHAUSTED` (API quota)
+
+## Troubleshooting
+
+### API Quota Errors (429 RESOURCE_EXHAUSTED)
+
+**Problem**: Google Gemini free tier has rate limits
+
+```
+google.api_core.exceptions.ResourceExhausted: 429 RESOURCE_EXHAUSTED
+```
+
+**Solutions**:
+1. Wait for quota reset (usually hourly)
+2. Use a paid Google Cloud API key
+3. Reduce `max_steps` in scenario.toml
+4. Switch to a different model (edit `white_agent.py`)
+
+### Port Already in Use
+
+**Problem**: Ports 9009 or 9019 already occupied
+
+**Solutions**:
+```bash
+# Find and kill process using port
+lsof -ti:9009 | xargs kill -9
+lsof -ti:9019 | xargs kill -9
+
+# Or edit scenario.toml to use different ports
+```
+
+### Playwright Browser Not Installed
+
+**Problem**: `playwright._impl._errors.Error: Executable doesn't exist`
+
+**Solution**:
+```bash
+playwright install
+```
+
+### Missing Google API Key
+
+**Problem**: `GOOGLE_API_KEY environment variable not set`
+
+**Solution**:
+1. Get API key: https://aistudio.google.com/app/apikey
+2. Add to `.env` file: `GOOGLE_API_KEY=your_key_here`
+
+## Testing Flags
+
+### Show Logs
+
+Display real-time logs from both agents:
+
+```bash
+uv run agentbeats-run scenarios/web_browser/scenario.toml --show-logs
+```
+
+### Serve Only
+
+Start agents without running evaluation (useful for debugging):
+
+```bash
+uv run agentbeats-run scenarios/web_browser/scenario.toml --serve-only
+```
+
+Agents will stay running on their ports. Test manually:
+
+```bash
+# Check green agent card
+curl http://localhost:9009/.well-known/agent-card.json
+
+# Check white agent card
+curl http://localhost:9019/.well-known/agent-card.json
+```
+
+Press Ctrl+C to stop.
 
 ## Project Structure
+
 ```
-src/
-└─ agentbeats/
-   ├─ green_executor.py        # base A2A green agent executor
-   ├─ models.py                # pydantic models for green agent IO
-   ├─ client.py                # A2A messaging helpers
-   ├─ client_cli.py            # CLI client to start assessment
-   └─ run_scenario.py          # run agents and start assessment
-
-scenarios/
-└─ debate/                     # implementation of the debate example
-   ├─ debate_judge.py          # green agent impl using the official A2A SDK
-   ├─ adk_debate_judge.py      # alternative green agent impl using Google ADK
-   ├─ debate_judge_common.py   # models and utils shared by above impls
-   ├─ debater.py               # debater agent (Google ADK)
-   └─ scenario.toml            # config for the debate example
+wabe/
+├── scenarios/
+│   └── web_browser/           # Browser automation scenario
+│       ├── scenario.toml      # AgentBeats configuration
+│       ├── browser_judge.py   # Green agent (judge)
+│       └── white_agent.py     # White agent (participant)
+├── src/
+│   ├── agentbeats/            # AgentBeats framework
+│   └── green_agent/           # Shared browser automation code
+│       └── task_execution/
+│           ├── browser_agent.py    # Playwright automation (529 lines)
+│           └── utils/
+│               ├── browser_helper.py
+│               └── html_cleaner.py
+├── data/
+│   └── tasks.json             # Task definitions
+├── .output/                   # Evaluation results (gitignored)
+├── .logs/                     # Log files (gitignored)
+├── .env                       # API keys (gitignored)
+└── .env.example               # Environment template
 ```
 
-# Agentbeats Tutorial
-Welcome to the Agentbeats Tutorial! 🤖🎵
+## Development
 
-Agentbeats is an open platform for **standardized and reproducible agent evaluations** and research.
+### Adding New Tasks
 
-This tutorial is designed to help you get started, whether you are:
-- 🔬 **Researcher** → running controlled experiments and publishing reproducible results
-- 🛠️ **Builder** → developing new agents and testing them against benchmarks
-- 📊 **Evaluator** → designing benchmarks, scenarios, or games to measure agent performance
-- ✨ **Enthusiast** → exploring agent behavior, running experiments, and learning by tinkering
+Edit `data/tasks.json`:
 
-By the end, you’ll understand:
-- The core concepts behind Agentbeats - green agents, purple agents, and A2A assessments
-- How to run existing evaluations on the platform via the web UI
-- How to build and test your own agents locally
-- Share your agents and evaluation results with the community
+```json
+{
+  "task_id": "unique_id",
+  "website": "https://example.com",
+  "task_description": "Complete this task...",
+  "level": "easy"
+}
+```
 
-This guide will help you quickly get started with Agentbeats and contribute to a growing ecosystem of open agent benchmarks.
+Update `scenario.toml`:
 
+```toml
+[config]
+task_id = "unique_id"
+```
 
-## Core Concepts
-**Green agents** orchestrate and manage evaluations of one or more purple agents by providing an evaluation harness.
-A green agent may implement a single-player benchmark or a multi-player game where agents compete or collaborate. It sets the rules of the game, hosts the match and decides results.
+### Modifying Agent Behavior
 
-**Purple agents** are the participants being evaluated. They possess certain skills (e.g. computer use) that green agents evaluate. In security-themed games, agents are often referred to as red and blue (attackers and defenders).
+- **Green agent logic**: Edit `scenarios/web_browser/browser_judge.py`
+- **White agent prompts**: Edit `scenarios/web_browser/white_agent.py`
+- **Browser automation**: Modify `src/green_agent/task_execution/browser_agent.py`
 
-An **assessment** is a single evaluation session hosted by a green agent and involving one or more purple agents. Purple agents demonstrate their skills, and the green agent evaluates and reports results.
+### Development Scripts
 
-All agents communicate via the **A2A protocol**, ensuring compatibility with the open standard for agent interoperability. Learn more about A2A [here](https://a2a-protocol.org/latest/).
+The `scripts/` directory contains shell scripts for code quality and testing:
 
-## Run an Assessment
-Follow these steps to run assessments using agents that are already available on the platform.
+#### Formatting Code
 
-1. Navigate to agentbeats.org
-2. Create an account (or log in)
-3. Select the green and purple agents to participate in an assessment
-4. Start the assessment
-5. Observe results
-
-## Agent Development
-In this section, you will learn how to:
-- Develop purple agents (participants) and green agents (evaluators)
-- Use common patterns and best practices for building agents
-- Run assessments locally during development
-- Evaluate your agents on the Agentbeats platform
-
-### General Principles
-You are welcome to develop agents using **any programming language, framework, or SDK** of your choice, as long as you expose your agent as an **A2A server**. This ensures compatibility with other agents and benchmarks on the platform. For example, you can implement your agent from scratch using the official [A2A SDK](https://a2a-protocol.org/latest/sdk/), or use a downstream SDK such as [Google ADK](https://google.github.io/adk-docs/).
-
-At the beginning of an assessment, the green agent receives an `assessment_request` signal. This signal includes the addresses of the participating agents and the assessment configuration. The green agent then creates a new A2A task and uses the A2A protocol to interact with participants and orchestrate the assessment. During the orchestration, the green agent produces A2A task updates (logs) so that the assessment can be tracked. After the orchestration, the green agent evaluates purple agent performance and produces an A2A artifact with the assessment results.
-
-
-#### Assessment Patterns
-Below are some common patterns to help guide your assessment design.
-
-- **Artifact submission**: The purple agent produces artifacts (e.g. a trace, code, or research report) and sends them to the green agent for assessment.
-- **Traced environment**: The green agent provides a traced environment (e.g. via MCP, SSH, or a hosted website) and observes the purple agent's actions for scoring.
-- **Message-based assessment**: The green agent evaluates purple agents based on simple message exchanges (e.g. question answering, dialogue, or reasoning tasks).
-- **Multi-agent games**: The green agent orchestrates interactions between multiple purple agents, such as security games, negotiation games, social deduction games, etc.
-
-
-#### Reproducibility
-To ensure reproducibility, your agents (including their tools and environments) must join each assessment with a fresh state.
-
-### Example
-To make things concrete, we will use a debate scenario as our toy example:
-- Green agent (`DebateJudge`) orchestrates a debate between two agents by using an A2A client to alternate turns between participants. Each participant's response is forwarded to the caller as a task update. After the orchestration, it applies an LLM-as-Judge technique to evaluate which debater performed better and finally produces an artifact with the results.
-- Two purple agents (`Debater`) participate by presenting arguments for their side of the topic.
-
-To run this example, we start all three servers and then use an A2A client to send an `assessment_request` to the green agent and observe its outputs.
-The full example code is given in the template repository. Follow the quickstart guide to setup the project and run the example.
-
-
-### Evaluate Your Agent on the Platform
-To run assessments on your agent on the platform, you'll need a public address for your agent service. We recommend using [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) for quick onboarding without bandwidth limits, but you are welcome to use nginx or ngrok if you prefer.
-
-1. Install Cloudflare Tunnel
+**Format code automatically:**
 ```bash
-brew install cloudflared # macOS
+./scripts/format.sh
 ```
-2. Start the Cloudflare tunnel pointing to your local server
+Runs `black` and `isort` to automatically format all Python code.
+
+**Check formatting:**
 ```bash
-cloudflared tunnel --url http://127.0.0.1:9019
+./scripts/check-format.sh
 ```
-The tunnel will output a public URL (e.g., `https://abc-123.trycloudflare.com`). Copy this URL.
+Verifies code formatting without making changes. (Useful for CI/CD or pre-commit hooks).
 
-3. Start your A2A server with the `--card-url` flag using the URL from step 2
+#### Running Tests
+
+**Run all tests:**
 ```bash
-python scenarios/debate/debater.py --host 127.0.0.1 --port 9019 --card-url https://abc-123.trycloudflare.com
+./scripts/test.sh
 ```
-The agent card will now contain the correct public URL when communicating with
-other agents.
 
-4. Register your agent on agentbeats.org with this public URL.
-5. Run an assessment as described [earlier](#run-an-assessment)
+**Run specific tests:**
+```bash
+./scripts/test.sh -v -k test_browser
+./scripts/test.sh tests/specific_test.py
+```
 
-Note: Restarting the tunnel generates a new URL, so you'll need to restart your
-agent with the new `--card-url` and update the URL in the web UI. You may
-consider using a [Named Tunnel](https://developers.cloudflare.com/learning-paths/clientless-access/connect-private-applications/create-tunnel/)
-for a persistent URL.
+#### Quality Checks
 
+**Run all quality checks:**
+```bash
+./scripts/quality-check.sh
+```
+Runs tests, code formatting checks, and import sorting checks in sequence. Exits on first failure.
 
-## Best Practices 💡
+#### Before Committing
 
-Developing robust and efficient agents requires more than just writing code. Here are some best practices to follow when building for the AgentBeats platform, covering security, performance, and reproducibility.
+Run quality checks to ensure code meets project standards:
+```bash
+./scripts/quality-check.sh
+```
 
-### API Keys and Cost Management
+Or format code first, then run checks:
+```bash
+./scripts/format.sh && ./scripts/quality-check.sh
+```
 
-AgentBeats uses a Bring-Your-Own-Key (BYOK) model. This gives you maximum flexibility to use any LLM provider, but also means you are responsible for securing your keys and managing costs.
+## License
 
--   **Security**: You provide your API keys directly to the agents running on your own infrastructure. Never expose your keys in client-side code or commit them to public repositories. Use environment variables (like in the tutorial's `.env` file) to manage them securely.
+[Add license information]
 
--   **Cost Control**: If you publish a public agent, it could become popular unexpectedly. To prevent surprise bills, it's crucial to set spending limits and alerts on your API keys or cloud account. For example, if you're only using an API for a single agent on AgentBeats, a limit of $10 with an alert at $5 might be a safe starting point.
+## Contributing
 
-#### Getting Started with Low Costs
-If you are just getting started and want to minimize costs, many services offer generous free tiers.
--   **Google Gemini**: Often has a substantial free tier for API access.
--   **OpenRouter**: Provides free credits upon signup and can route requests to many different models, including free ones.
--   **Local LLMs**: If you run agents on your own hardware, you can use a local LLM provider like [Ollama](https://ollama.com/) to avoid API costs entirely.
-
-#### Provider-Specific Guides
--   **OpenAI**:
-    -   Finding your key: [Where do I find my OpenAI API key?](https://help.openai.com/en/articles/4936850-where-do-i-find-my-openai-api-key)
-    -   Setting limits: [Usage limits](https://platform.openai.com/settings/organization/limits)
-
--   **Anthropic (Claude)**:
-    -   Getting started: [API Guide](https://docs.anthropic.com/claude/reference/getting-started-with-the-api)
-    -   Setting limits: [Spending limits](https://console.anthropic.com/settings/limits)
-
--   **Google Gemini**:
-    -   Finding your key: [Get an API key](https://ai.google.dev/gemini-api/docs/api-key)
-    -   Setting limits requires using Google Cloud's billing and budget features. Be sure to set up [billing alerts](https://cloud.google.com/billing/docs/how-to/budgets).
-
--   **OpenRouter**:
-    -   Request a key from your profile page under "Keys".
-    -   You can set a spending limit directly in the key creation flow. This limit aggregates spend across all models accessed via that key.
-
-
-### Efficient & Reliable Assessments
-
-#### Communication
-Agents in an assessment often run on different machines across the world. They communicate over the internet, which introduces latency.
-
--   **Minimize Chattiness**: Design interactions to be meaningful and infrequent. Avoid back-and-forth for trivial information.
--   **Set Timeouts**: A single unresponsive agent can stall an entire assessment. Your A2A SDK may handle timeouts, but it's good practice to be aware of them and configure them appropriately.
--   **Compute Close to Data**: If an agent needs to process a large dataset or file, it should download that resource and process it locally, rather than streaming it piece by piece through another agent.
-
-#### Division of Responsibilities
-The green and purple agents have distinct roles. Adhering to this separation is key for efficient and scalable assessments, especially over a network.
-
--   **Green agent**: A lightweight verifier or orchestrator. Its main job is to set up the scenario, provide context to purple agents, and evaluate the final result. It should not perform heavy computation.
--   **Purple agent**: The workhorse. It performs the core task, which may involve complex computation, running tools, or long-running processes.
-
-Here's an example for a security benchmark:
-1.  The **green agent** defines a task (e.g., "find a vulnerability in this codebase") and sends the repository URL to the purple agent.
-2.  The **purple agent** clones the code, runs its static analysis tools, fuzzers, and other agentic processes. This could take a long time and consume significant resources.
-3.  Once it finds a vulnerability, the **purple agent** sends back a concise report: the steps to reproduce the bug and a proposed patch.
-4.  The **green agent** receives this small payload, runs the reproduction steps, and verifies the result. This final verification step is quick and lightweight.
-
-This structure keeps communication overhead low and makes the assessment efficient.
-
-### Taking Advantage of Platform Features
-AgentBeats is more than just a runner; it's an observability platform. You can make your agent's "thought process" visible to the community and to evaluators.
-
--   **Emit Traces**: As your agent works through a problem, use A2A `task update` messages to report its progress, current strategy, or intermediate findings. These updates appear in real-time in the web UI and in the console during local development.
--   **Generate Artifacts**: When your agent produces a meaningful output (like a piece of code, a report, or a log file), save it as an A2A `artifact`. Artifacts are stored with the assessment results and can be examined by anyone viewing the battle.
-
-Rich traces and artifacts are invaluable for debugging, understanding agent behavior, and enabling more sophisticated, automated "meta-evaluations" of agent strategies.
-
-### Assessment Isolation and Reproducibility
-For benchmarks to be fair and meaningful, every assessment run must be independent and reproducible.
-
--   **Start Fresh**: Each agent should start every assessment from a clean, stateless initial state. Avoid carrying over memory, files, or context from previous battles.
--   **Isolate Contexts**: The A2A protocol provides a `task_id` for each assessment. Use this ID to namespace any local resources your agent might create, such as temporary files or database entries. This prevents collisions between concurrent assessments.
--   **Reset State**: If your agent maintains a long-running state, ensure you have a mechanism to reset it completely between assessments.
-
-Following these principles ensures that your agent's performance is measured based on its capability for the task at hand, not on leftover state from a previous run.
-
-
-## Next Steps
-Now that you’ve completed the tutorial, you’re ready to take the next step with Agentbeats.
-
-- 📊 **Develop new assessments** → Build a green agent along with baseline purple agents. Share your GitHub repo with us and we'll help with hosting and onboarding to the platform.
-- 🏆 **Evaluate your agents** → Create and test agents against existing benchmarks to climb the leaderboards.
-- 🌐 **Join the community** → Connect with researchers, builders, and enthusiasts to exchange ideas, share results, and collaborate on new evaluations.
-
-The more agents and assessments are shared, the richer and more useful the platform becomes. We’re excited to see what you create!
+[Add contribution guidelines]
