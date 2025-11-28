@@ -26,7 +26,7 @@ def browser_agent_card(host: str, port: int, card_url: str = None) -> AgentCard:
         description="A web browser navigation agent that helps complete web tasks by analyzing HTML and providing navigation actions.",
         url=card_url or f"http://{host}:{port}/",
         version="1.0.0",
-        default_input_modes=["text"],
+        default_input_modes=["text", "image"],
         default_output_modes=["text"],
         capabilities=AgentCapabilities(streaming=True),
         skills=[],
@@ -57,12 +57,7 @@ def main():
         instruction="""You are a helpful web automation agent.
 Your task is to help complete web navigation and interaction tasks.
 
-You will receive messages with:
-- HTML: The current page HTML
-- Task: The task to complete
-- Previous actions: Actions taken so far
-
-Analyze the HTML carefully and choose the appropriate action to progress toward completing the task.""",
+Analyze the information provided and choose the appropriate action to progress toward completing the task.""",
     )
 
     # Create agent card

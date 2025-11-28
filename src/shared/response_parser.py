@@ -72,6 +72,16 @@ def parse_white_agent_response(response_text: str) -> Dict[str, Any]:
     except (json.JSONDecodeError, ValueError) as e:
         logger.debug(f"Failed to parse structured text format: {e}")
 
-    # Default: assume it's just text response (finish)
-    logger.debug("Using default response format (finish)")
-    return {"thought": response_text, "tool": "finish", "params": {}}
+    # Default: unparseable response - return error for feedback/retry
+    # This allows the green agent to provide feedback to the white agent to retry with correct format
+    logger.warning(
+        f"Could not parse white agent response, will provide feedback for retry. Got: {response_text[:500]}"
+    )
+    return {
+        "thought": f"PARSE ERROR: Could not understand response format. Expected JSON with <json> tags or structured text (THOUGHT:/ACTION:/PARAMS:). Raw response: {response_text[:200]}",
+        "tool": "error",
+        "params": {
+            "error_type": "parse_failure",
+            "raw_response": response_text[:1000],  # Include more context for debugging
+        },
+    }

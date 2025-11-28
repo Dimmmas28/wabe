@@ -4,19 +4,32 @@ from uuid import uuid4
 
 import httpx
 from a2a.client import A2ACardResolver, ClientConfig, ClientFactory, Consumer
-from a2a.types import DataPart, Message, Part, Role, TextPart
+from a2a.types import (DataPart, FilePart, FileWithBytes, Message, Part, Role,
+                       TextPart)
 
 DEFAULT_TIMEOUT = 300
 logger = logging.getLogger(__name__)
 
 
 def create_message(
-    *, role: Role = Role.user, text: str, context_id: str | None = None
+    *,
+    role: Role = Role.user,
+    text: str = None,
+    parts: list[Part] = None,
+    context_id: str | None = None,
 ) -> Message:
+    # If parts provided, use them; otherwise create TextPart from text
+    if parts is None:
+        if text is None:
+            raise ValueError("Either text or parts must be provided")
+        message_parts = [Part(root=TextPart(kind="text", text=text))]
+    else:
+        message_parts = parts
+
     return Message(
         kind="message",
         role=role,
-        parts=[Part(TextPart(kind="text", text=text))],
+        parts=message_parts,
         message_id=uuid4().hex,
         context_id=context_id,
     )
@@ -33,12 +46,13 @@ def merge_parts(parts: list[Part]) -> str:
 
 
 async def send_message(
-    message: str,
-    base_url: str,
+    message: str = None,
+    base_url: str = None,
     context_id: str | None = None,
     streaming=False,
     consumer: Consumer | None = None,
     max_retries: int = 3,
+    parts: list[Part] = None,
 ):
     """
     Returns dict with context_id, response and status (if exists).
@@ -70,7 +84,9 @@ async def send_message(
                 if consumer:
                     await client.add_event_consumer(consumer)
 
-                outbound_msg = create_message(text=message, context_id=context_id)
+                outbound_msg = create_message(
+                    text=message, parts=parts, context_id=context_id
+                )
                 last_event = None
                 outputs = {"response": "", "context_id": None}
 
@@ -101,11 +117,15 @@ async def send_message(
         except Exception as e:
             error_str = str(e).lower()
             # Check if this is a rate limit error (429 or RESOURCE_EXHAUSTED)
-            is_rate_limit = "429" in error_str or "resource_exhausted" in error_str or "too many requests" in error_str
+            is_rate_limit = (
+                "429" in error_str
+                or "resource_exhausted" in error_str
+                or "too many requests" in error_str
+            )
 
             if is_rate_limit and retry_count < max_retries:
                 # Calculate exponential backoff delay
-                delay = base_delay * (2 ** retry_count)
+                delay = base_delay * (2**retry_count)
                 logger.warning(
                     f"Rate limit hit (429). Retrying in {delay} seconds... "
                     f"(Attempt {retry_count + 1}/{max_retries})"
@@ -115,5 +135,7 @@ async def send_message(
             else:
                 # Not a rate limit error, or we've exhausted retries
                 if is_rate_limit:
-                    logger.error(f"Rate limit error persisted after {max_retries} retries")
+                    logger.error(
+                        f"Rate limit error persisted after {max_retries} retries"
+                    )
                 raise
