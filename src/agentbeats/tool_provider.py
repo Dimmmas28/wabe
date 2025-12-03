@@ -9,10 +9,10 @@ class ToolProvider:
 
     async def talk_to_agent(
         self,
-        message: str = None,
-        url: str = None,
+        message: str | None = None,
+        url: str | None = None,
         new_conversation: bool = False,
-        parts: list[Part] = None,
+        parts: list[Part] | None = None,
     ):
         """
         Communicate with another agent by sending a message and receiving their response.

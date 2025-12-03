@@ -271,7 +271,7 @@ What should we do next?"""
                     file_part = FilePart(
                         file=FileWithBytes(
                             bytes=base64_string,
-                            mimeType="image/jpeg",
+                            mime_type="image/jpeg",
                             name=Path(screenshot_path).name,
                         )
                     )
