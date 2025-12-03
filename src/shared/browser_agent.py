@@ -1,10 +1,13 @@
 import asyncio
+import base64
+import io
 import json
 import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from PIL import Image
 from playwright.async_api import Browser, Page, async_playwright
 
 from shared.browser_helper import normal_launch_async, normal_new_context_async
@@ -308,6 +311,63 @@ class BrowserAgent:
     def get_screenshots(self) -> List[str]:
         """Get list of screenshot paths"""
         return self.screenshots.copy()
+
+    def get_latest_screenshot_base64(
+        self, max_width: int = 1280, quality: int = 80
+    ) -> tuple[str, str] | None:
+        """
+        Get the latest screenshot as base64-encoded string.
+        Compresses and resizes the image to reduce payload size.
+
+        Args:
+            max_width: Maximum width for resizing (default: 1280px)
+            quality: JPEG quality 1-100 (default: 80)
+
+        Returns:
+            Tuple of (base64_string, file_path) or None if no screenshots exist
+        """
+        if not self.screenshots:
+            return None
+
+        latest_screenshot_path = self.screenshots[-1]
+
+        try:
+            # Open and resize image
+            img = Image.open(latest_screenshot_path)
+
+            # Resize if width exceeds max_width
+            if img.width > max_width:
+                ratio = max_width / img.width
+                new_height = int(img.height * ratio)
+                img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
+
+            # Convert to RGB if necessary (JPEG doesn't support transparency)
+            if img.mode in ("RGBA", "LA", "P"):
+                background = Image.new("RGB", img.size, (255, 255, 255))
+                if img.mode == "P":
+                    img = img.convert("RGBA")
+                background.paste(
+                    img, mask=img.split()[-1] if img.mode in ("RGBA", "LA") else None
+                )
+                img = background
+
+            # Save to bytes as JPEG with compression
+            buffer = io.BytesIO()
+            img.save(buffer, format="JPEG", quality=quality, optimize=True)
+            image_bytes = buffer.getvalue()
+
+            # Encode to base64
+            base64_string = base64.b64encode(image_bytes).decode("utf-8")
+
+            logger.info(
+                f"Encoded screenshot {Path(latest_screenshot_path).name}: "
+                f"{len(image_bytes)} bytes (JPEG {quality}% quality, {img.width}x{img.height})"
+            )
+
+            return base64_string, latest_screenshot_path
+        except Exception as e:
+            logger.error(f"Failed to encode screenshot {latest_screenshot_path}: {e}")
+            return None
 
     async def get_html(self, cleaned: bool = True, format: str = "html") -> str:
         """Get current page HTML"""

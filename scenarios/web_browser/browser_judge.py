@@ -8,6 +8,7 @@ by orchestrating browser interactions and coordinating with the white agent.
 import argparse
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import sys
@@ -19,8 +20,8 @@ import uvicorn
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
-from a2a.types import (AgentCapabilities, AgentCard, AgentSkill, Part,
-                       TaskState, TextPart)
+from a2a.types import (AgentCapabilities, AgentCard, AgentSkill, FilePart,
+                       FileWithBytes, Part, TaskState, TextPart)
 from a2a.utils import new_agent_text_message
 from dotenv import load_dotenv
 
@@ -153,9 +154,11 @@ AVAILABLE TOOLS:
    Parameters: {{"selector": "CSS selector", "value": "option value"}}
 
 4. finish - Complete the task (no parameters needed)
+   Parameters: {{}}
 
-RESPONSE FORMAT:
-You must respond with JSON in this exact format:
+CRITICAL - RESPONSE FORMAT:
+You MUST respond with JSON wrapped in <json></json> tags in this EXACT format:
+
 <json>
 {{
     "thought": "Your reasoning about what to do next",
@@ -164,10 +167,50 @@ You must respond with JSON in this exact format:
 }}
 </json>
 
+EXAMPLES OF VALID RESPONSES:
+
+Example 1 - Click action:
+<json>
+{{
+    "thought": "I need to click the search button to proceed",
+    "tool": "click",
+    "params": {{"selector": "button#search"}}
+}}
+</json>
+
+Example 2 - Type action:
+<json>
+{{
+    "thought": "I should enter the search term in the input field",
+    "tool": "type",
+    "params": {{"selector": "input[name='query']", "text": "Las Vegas"}}
+}}
+</json>
+
+Example 3 - Finish action:
+<json>
+{{
+    "thought": "The task is complete, I have selected a theatre event",
+    "tool": "finish",
+    "params": {{}}
+}}
+</json>
+
+IMPORTANT NOTES:
+- Always wrap your JSON response in <json></json> tags
+- The "thought" field should explain your reasoning
+- The "tool" field must be one of: click, type, select, finish
+- The "params" field must be a valid JSON object (use {{}} for finish)
+- Do not include any text outside the <json></json> tags
+
 CURRENT PAGE STATE:
 """
 
             # Main evaluation loop
+            error_feedback = (
+                None  # Track parse errors to provide feedback to white agent
+            )
+
             for step in range(max_steps):
                 step_count = step + 1
                 logger.info(f"Starting step {step_count}/{max_steps}")
@@ -175,7 +218,9 @@ CURRENT PAGE STATE:
                 # Add delay between steps to avoid rate limiting (except first step)
                 if step > 0:
                     delay = 2  # 2 second delay between steps
-                    logger.info(f"Waiting {delay}s before next step to avoid rate limits...")
+                    logger.info(
+                        f"Waiting {delay}s before next step to avoid rate limits..."
+                    )
                     await asyncio.sleep(delay)
 
                 await updater.update_status(
@@ -191,25 +236,95 @@ CURRENT PAGE STATE:
                 if len(html) > 20000:
                     html_truncated += "\n\n[HTML truncated for length...]"
 
-                # Prepare message for white agent
+                # Prepare multi-part message (text + image)
+                parts = []
+
+                # 1. Add text part with HTML and instructions
                 if step == 0:
-                    message = initial_prompt + f"\n\nCURRENT HTML:\n{html_truncated}"
-                else:
-                    message = (
-                        f"CURRENT HTML:\n{html_truncated}\n\nWhat should we do next?"
+                    text_content = (
+                        initial_prompt + f"\n\nCURRENT HTML:\n{html_truncated}"
                     )
+                else:
+                    # Include error feedback if previous response had parse errors
+                    if error_feedback:
+                        text_content = f"""ERROR IN PREVIOUS RESPONSE:
+{error_feedback}
+
+Please try again with the correct format. Remember to wrap your JSON in <json></json> tags.
+
+CURRENT HTML:
+{html_truncated}
+
+What should we do next?"""
+                        error_feedback = None  # Clear feedback after using it
+                    else:
+                        text_content = f"CURRENT HTML:\n{html_truncated}\n\nWhat should we do next?"
+
+                parts.append(Part(root=TextPart(text=text_content)))
+
+                # 2. Add image part (screenshot)
+                screenshot_data = browser_agent.get_latest_screenshot_base64()
+                if screenshot_data:
+                    base64_string, screenshot_path = screenshot_data
+                    logger.info(f"Attaching screenshot: {Path(screenshot_path).name}")
+
+                    file_part = FilePart(
+                        file=FileWithBytes(
+                            bytes=base64_string,
+                            mime_type="image/jpeg",
+                            name=Path(screenshot_path).name,
+                        )
+                    )
+                    parts.append(Part(root=file_part))
+                else:
+                    logger.warning("No screenshot available to attach")
+
+                # Log what we're sending to white agent
+                logger.info("=" * 60)
+                logger.info(f"STEP {step_count}/{max_steps}: Sending to white agent")
+                logger.info("=" * 60)
+                logger.info(
+                    f"Message parts: {len(parts)} (text + {'image' if screenshot_data else 'no image'})"
+                )
+                logger.info(
+                    f"HTML length: {len(html)} chars (truncated to {len(html_truncated)} chars for agent)"
+                )
+                if screenshot_data:
+                    logger.info(f"Screenshot: {Path(screenshot_path).name}")
+
+                # Log first 500 chars of HTML for debugging
+                logger.info(f"HTML preview (first 500 chars):\n{html[:500]}")
+
+                # Save full HTML to file for detailed debugging (optional via env var)
+                if os.getenv("SAVE_DEBUG_HTML", "false").lower() in (
+                    "true",
+                    "1",
+                    "yes",
+                ):
+                    debug_html_path = (
+                        f"{browser_agent.output_dir}/step_{step_count:03d}_input.html"
+                    )
+                    Path(debug_html_path).write_text(html)
+                    logger.info(f"Saved full HTML to: {debug_html_path}")
 
                 # Send to white agent and get response
                 logger.info(f"Sending message to white agent at {white_agent_url}")
                 try:
                     response_text = await self._tool_provider.talk_to_agent(
-                        message=message,
                         url=white_agent_url,
-                        new_conversation=(step == 0),  # New conversation on first step
+                        new_conversation=(step == 0),
+                        parts=parts,
                     )
+
+                    # Log full response (not truncated)
+                    logger.info("=" * 60)
                     logger.info(
-                        f"Received response from white agent: {response_text[:200]}..."
+                        f"STEP {step_count}/{max_steps}: Response from white agent"
                     )
+                    logger.info("=" * 60)
+                    logger.info(f"Full response:\n{response_text}")
+                    logger.info("=" * 60)
+
                 except Exception as e:
                     error_message = f"Failed to communicate with white agent: {str(e)}"
                     logger.error(error_message)
@@ -223,7 +338,24 @@ CURRENT PAGE STATE:
                     params = action.get("params", {})
 
                     thoughts.append(f"Step {step_count}: {thought}")
-                    logger.info(f"Parsed action - Tool: {tool}, Params: {params}")
+
+                    # Log parsed action details
+                    logger.info(f"Parsed action:")
+                    logger.info(f"  Thought: {thought}")
+                    logger.info(f"  Tool: {tool}")
+                    logger.info(f"  Params: {params}")
+
+                    # Save response to file for debugging (optional via env var)
+                    if os.getenv("SAVE_DEBUG_RESPONSES", "false").lower() in (
+                        "true",
+                        "1",
+                        "yes",
+                    ):
+                        debug_response_path = f"{browser_agent.output_dir}/step_{step_count:03d}_response.json"
+                        Path(debug_response_path).write_text(
+                            json.dumps(action, indent=2)
+                        )
+                        logger.info(f"Saved response to: {debug_response_path}")
 
                 except Exception as e:
                     error_message = f"Failed to parse white agent response: {str(e)}"
@@ -235,6 +367,29 @@ CURRENT PAGE STATE:
                     logger.info("White agent indicated task completion")
                     success = True
                     break
+
+                # Check if there was a parsing error - provide feedback and retry
+                if tool == "error":
+                    error_type = params.get("error_type", "unknown")
+                    raw_response = params.get("raw_response", "")
+                    logger.warning(
+                        f"White agent response parsing failed ({error_type}), will retry with feedback"
+                    )
+
+                    # Set error feedback for next iteration
+                    error_feedback = f"""Your previous response could not be parsed ({error_type}).
+
+Your response was:
+{raw_response[:500]}
+
+Please ensure you:
+1. Wrap your JSON in <json></json> tags
+2. Use valid JSON format with double quotes
+3. Include all three required fields: "thought", "tool", and "params"
+4. Use one of the valid tools: click, type, select, finish
+"""
+                    # Don't execute any action, just continue to next step with feedback
+                    continue
 
                 # Execute action in browser
                 try:
@@ -286,7 +441,20 @@ CURRENT PAGE STATE:
                 },
             )
 
-            logger.info(f"Evaluation complete. Success: {success}, Steps: {step_count}")
+            # Log evaluation summary
+            logger.info("=" * 60)
+            logger.info("EVALUATION SUMMARY")
+            logger.info("=" * 60)
+            logger.info(f"Task: {task_description}")
+            logger.info(f"Success: {success}")
+            logger.info(f"Steps taken: {step_count}/{max_steps}")
+            logger.info(f"Thoughts:")
+            for i, thought in enumerate(thoughts, 1):
+                logger.info(f"  {i}. {thought}")
+            logger.info(f"Action history: {browser_agent.get_action_history()}")
+            if error_message:
+                logger.info(f"Error: {error_message}")
+            logger.info("=" * 60)
 
             # Add result artifact
             await updater.add_artifact(
