@@ -136,7 +136,7 @@ def run_container(tag: str, show_logs: bool = False, env_file: str = ".env"):
         subprocess.run(cmd, check=True)
         print()
         print("✓ Evaluation completed successfully!")
-        print(f"   Results: {output_dir}/browser_eval_*/")
+        print(f"   Results: {output_dir}/")
     except subprocess.CalledProcessError as e:
         print()
         print(f"❌ Evaluation failed (exit code {e.returncode})")

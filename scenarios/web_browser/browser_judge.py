@@ -13,15 +13,23 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any
 
 import uvicorn
+
 # A2A framework
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
-from a2a.types import (AgentCapabilities, AgentCard, AgentSkill, FilePart,
-                       FileWithBytes, Part, TaskState, TextPart)
+from a2a.types import (
+    AgentCapabilities,
+    AgentCard,
+    AgentSkill,
+    FilePart,
+    FileWithBytes,
+    Part,
+    TaskState,
+    TextPart,
+)
 from a2a.utils import new_agent_text_message
 from dotenv import load_dotenv
 
@@ -34,8 +42,17 @@ from agentbeats.tool_provider import ToolProvider
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Existing WABE components
-from src.shared.browser_agent import BrowserAgent
-from src.shared.response_parser import parse_white_agent_response
+from eval.benchmark import Config, run_benchmark_eval
+from green_agent.constants import (
+    EVAL_MODE,
+    EVAL_MODEL,
+    EVAL_RESULT_OUTPUT_DIR,
+    MAX_HTML_CONTEXT_LENGTH,
+    TASK_RESULT_OUTPUT_DIR,
+)
+from green_agent.prompts import BrowserJudgePrompts
+from shared.browser_agent import BrowserAgent
+from shared.response_parser import parse_white_agent_response
 
 # Load environment variables
 load_dotenv()
@@ -102,7 +119,6 @@ class BrowserJudge(GreenAgent):
         logger.info(f"Starting browser evaluation: {req}")
 
         # Extract configuration
-        white_agent_url = str(req.participants["white_agent"])
         task_id = req.config["task_id"]
         website = req.config["website"]
         task_description = req.config["task"]
@@ -119,16 +135,10 @@ class BrowserJudge(GreenAgent):
         # Default to False for local development to see browser
         headless = os.getenv("HEADLESS", "false").lower() in ("true", "1", "yes")
         browser_agent = BrowserAgent(
-            headless=headless, output_dir=f".output/browser_eval_{task_id}"
+            headless=headless, output_dir=f"{TASK_RESULT_OUTPUT_DIR}/{task_id}"
         )
 
-        success = False
-        step_count = 0
-        thoughts: list[str] = []
-        error_message = None
-
         try:
-            # Start browser and navigate to website
             logger.info(f"Starting browser and navigating to {website}")
             await updater.update_status(
                 TaskState.working,
@@ -136,283 +146,9 @@ class BrowserJudge(GreenAgent):
             )
             await browser_agent.start(website)
 
-            # Prepare initial prompt for white agent
-            initial_prompt = f"""You are a web automation agent. Your task is:
-
-TASK: {task_description}
-
-You are currently on the website: {website}
-
-AVAILABLE TOOLS:
-1. click - Click on an element
-   Parameters: {{"selector": "CSS selector or XPath"}}
-
-2. type - Type text into an input element
-   Parameters: {{"selector": "CSS selector", "text": "text to type"}}
-
-3. select - Select an option from a dropdown
-   Parameters: {{"selector": "CSS selector", "value": "option value"}}
-
-4. finish - Complete the task (no parameters needed)
-   Parameters: {{}}
-
-CRITICAL - RESPONSE FORMAT:
-You MUST respond with JSON wrapped in <json></json> tags in this EXACT format:
-
-<json>
-{{
-    "thought": "Your reasoning about what to do next",
-    "tool": "tool_name",
-    "params": {{"param_name": "param_value"}}
-}}
-</json>
-
-EXAMPLES OF VALID RESPONSES:
-
-Example 1 - Click action:
-<json>
-{{
-    "thought": "I need to click the search button to proceed",
-    "tool": "click",
-    "params": {{"selector": "button#search"}}
-}}
-</json>
-
-Example 2 - Type action:
-<json>
-{{
-    "thought": "I should enter the search term in the input field",
-    "tool": "type",
-    "params": {{"selector": "input[name='query']", "text": "Las Vegas"}}
-}}
-</json>
-
-Example 3 - Finish action:
-<json>
-{{
-    "thought": "The task is complete, I have selected a theatre event",
-    "tool": "finish",
-    "params": {{}}
-}}
-</json>
-
-IMPORTANT NOTES:
-- Always wrap your JSON response in <json></json> tags
-- The "thought" field should explain your reasoning
-- The "tool" field must be one of: click, type, select, finish
-- The "params" field must be a valid JSON object (use {{}} for finish)
-- Do not include any text outside the <json></json> tags
-
-CURRENT PAGE STATE:
-"""
-
-            # Main evaluation loop
-            error_feedback = (
-                None  # Track parse errors to provide feedback to white agent
+            success, step_count, thoughts, error_message = await self._run_task(
+                max_steps, browser_agent, updater, task_description, website, req
             )
-
-            for step in range(max_steps):
-                step_count = step + 1
-                logger.info(f"Starting step {step_count}/{max_steps}")
-
-                # Add delay between steps to avoid rate limiting (except first step)
-                if step > 0:
-                    delay = 2  # 2 second delay between steps
-                    logger.info(
-                        f"Waiting {delay}s before next step to avoid rate limits..."
-                    )
-                    await asyncio.sleep(delay)
-
-                await updater.update_status(
-                    TaskState.working,
-                    new_agent_text_message(f"Executing step {step_count}/{max_steps}"),
-                )
-
-                # Get current page HTML
-                html = await browser_agent.get_html(cleaned=True, format="html")
-
-                # Truncate HTML if too long (keep first 20000 chars)
-                html_truncated = html[:20000]
-                if len(html) > 20000:
-                    html_truncated += "\n\n[HTML truncated for length...]"
-
-                # Prepare multi-part message (text + image)
-                parts = []
-
-                # 1. Add text part with HTML and instructions
-                if step == 0:
-                    text_content = (
-                        initial_prompt + f"\n\nCURRENT HTML:\n{html_truncated}"
-                    )
-                else:
-                    # Include error feedback if previous response had parse errors
-                    if error_feedback:
-                        text_content = f"""ERROR IN PREVIOUS RESPONSE:
-{error_feedback}
-
-Please try again with the correct format. Remember to wrap your JSON in <json></json> tags.
-
-CURRENT HTML:
-{html_truncated}
-
-What should we do next?"""
-                        error_feedback = None  # Clear feedback after using it
-                    else:
-                        text_content = f"CURRENT HTML:\n{html_truncated}\n\nWhat should we do next?"
-
-                parts.append(Part(root=TextPart(text=text_content)))
-
-                # 2. Add image part (screenshot)
-                screenshot_data = browser_agent.get_latest_screenshot_base64()
-                if screenshot_data:
-                    base64_string, screenshot_path = screenshot_data
-                    logger.info(f"Attaching screenshot: {Path(screenshot_path).name}")
-
-                    file_part = FilePart(
-                        file=FileWithBytes(
-                            bytes=base64_string,
-                            mime_type="image/jpeg",
-                            name=Path(screenshot_path).name,
-                        )
-                    )
-                    parts.append(Part(root=file_part))
-                else:
-                    logger.warning("No screenshot available to attach")
-
-                # Log what we're sending to white agent
-                logger.info("=" * 60)
-                logger.info(f"STEP {step_count}/{max_steps}: Sending to white agent")
-                logger.info("=" * 60)
-                logger.info(
-                    f"Message parts: {len(parts)} (text + {'image' if screenshot_data else 'no image'})"
-                )
-                logger.info(
-                    f"HTML length: {len(html)} chars (truncated to {len(html_truncated)} chars for agent)"
-                )
-                if screenshot_data:
-                    logger.info(f"Screenshot: {Path(screenshot_path).name}")
-
-                # Log first 500 chars of HTML for debugging
-                logger.info(f"HTML preview (first 500 chars):\n{html[:500]}")
-
-                # Save full HTML to file for detailed debugging (optional via env var)
-                if os.getenv("SAVE_DEBUG_HTML", "false").lower() in (
-                    "true",
-                    "1",
-                    "yes",
-                ):
-                    debug_html_path = (
-                        f"{browser_agent.output_dir}/step_{step_count:03d}_input.html"
-                    )
-                    Path(debug_html_path).write_text(html)
-                    logger.info(f"Saved full HTML to: {debug_html_path}")
-
-                # Send to white agent and get response
-                logger.info(f"Sending message to white agent at {white_agent_url}")
-                try:
-                    response_text = await self._tool_provider.talk_to_agent(
-                        url=white_agent_url,
-                        new_conversation=(step == 0),
-                        parts=parts,
-                    )
-
-                    # Log full response (not truncated)
-                    logger.info("=" * 60)
-                    logger.info(
-                        f"STEP {step_count}/{max_steps}: Response from white agent"
-                    )
-                    logger.info("=" * 60)
-                    logger.info(f"Full response:\n{response_text}")
-                    logger.info("=" * 60)
-
-                except Exception as e:
-                    error_message = f"Failed to communicate with white agent: {str(e)}"
-                    logger.error(error_message)
-                    break
-
-                # Parse white agent's response
-                try:
-                    action = parse_white_agent_response(response_text)
-                    thought = action.get("thought", "No thought provided")
-                    tool = action.get("tool", "finish")
-                    params = action.get("params", {})
-
-                    thoughts.append(f"Step {step_count}: {thought}")
-
-                    # Log parsed action details
-                    logger.info(f"Parsed action:")
-                    logger.info(f"  Thought: {thought}")
-                    logger.info(f"  Tool: {tool}")
-                    logger.info(f"  Params: {params}")
-
-                    # Save response to file for debugging (optional via env var)
-                    if os.getenv("SAVE_DEBUG_RESPONSES", "false").lower() in (
-                        "true",
-                        "1",
-                        "yes",
-                    ):
-                        debug_response_path = f"{browser_agent.output_dir}/step_{step_count:03d}_response.json"
-                        Path(debug_response_path).write_text(
-                            json.dumps(action, indent=2)
-                        )
-                        logger.info(f"Saved response to: {debug_response_path}")
-
-                except Exception as e:
-                    error_message = f"Failed to parse white agent response: {str(e)}"
-                    logger.error(error_message)
-                    break
-
-                # Check if task is finished
-                if tool == "finish":
-                    logger.info("White agent indicated task completion")
-                    success = True
-                    break
-
-                # Check if there was a parsing error - provide feedback and retry
-                if tool == "error":
-                    error_type = params.get("error_type", "unknown")
-                    raw_response = params.get("raw_response", "")
-                    logger.warning(
-                        f"White agent response parsing failed ({error_type}), will retry with feedback"
-                    )
-
-                    # Set error feedback for next iteration
-                    error_feedback = f"""Your previous response could not be parsed ({error_type}).
-
-Your response was:
-{raw_response[:500]}
-
-Please ensure you:
-1. Wrap your JSON in <json></json> tags
-2. Use valid JSON format with double quotes
-3. Include all three required fields: "thought", "tool", and "params"
-4. Use one of the valid tools: click, type, select, finish
-"""
-                    # Don't execute any action, just continue to next step with feedback
-                    continue
-
-                # Execute action in browser
-                try:
-                    logger.info(f"Executing action: {tool} with params {params}")
-                    result = await browser_agent.execute_action(tool, **params)
-
-                    if not result.get("success", False):
-                        error_message = result.get(
-                            "error", "Unknown error during action execution"
-                        )
-                        logger.warning(f"Action execution failed: {error_message}")
-                        # Continue to next step rather than breaking - give agent another chance
-                    else:
-                        logger.info(f"Action executed successfully")
-
-                except Exception as e:
-                    error_message = f"Exception during action execution: {str(e)}"
-                    logger.error(error_message)
-                    # Continue to next step
-
-            # If we completed all steps without finishing, it's a failure
-            if step_count >= max_steps and not success:
-                logger.info(f"Reached max steps ({max_steps}) without completion")
 
             # Save browser session
             final_status = "completed" if success else "failed"
@@ -423,53 +159,15 @@ Please ensure you:
                 thoughts=thoughts,
             )
 
-            # Create evaluation result
-            result = EvalResult(
-                winner="white_agent" if success else "none",
-                detail={
-                    "task_id": task_id,
-                    "website": website,
-                    "task_description": task_description,
-                    "level": level,
-                    "success": success,
-                    "steps_taken": step_count,
-                    "max_steps": max_steps,
-                    "thoughts": thoughts,
-                    "action_history": browser_agent.get_action_history(),
-                    "screenshots": browser_agent.get_screenshots(),
-                    "error": error_message,
-                },
+            self._log_evaluation_summary(
+                task_description,
+                step_count,
+                max_steps,
+                success,
+                thoughts,
+                browser_agent.get_action_history(),
+                error_message,
             )
-
-            # Log evaluation summary
-            logger.info("=" * 60)
-            logger.info("EVALUATION SUMMARY")
-            logger.info("=" * 60)
-            logger.info(f"Task: {task_description}")
-            logger.info(f"Success: {success}")
-            logger.info(f"Steps taken: {step_count}/{max_steps}")
-            logger.info(f"Thoughts:")
-            for i, thought in enumerate(thoughts, 1):
-                logger.info(f"  {i}. {thought}")
-            logger.info(f"Action history: {browser_agent.get_action_history()}")
-            if error_message:
-                logger.info(f"Error: {error_message}")
-            logger.info("=" * 60)
-
-            # Add result artifact
-            await updater.add_artifact(
-                parts=[Part(root=TextPart(text=result.model_dump_json(indent=2)))],
-                name="EvaluationResult",
-            )
-
-            # Final status update
-            await updater.update_status(
-                TaskState.working,
-                new_agent_text_message(
-                    f"Evaluation complete. Success: {success}, Steps taken: {step_count}/{max_steps}"
-                ),
-            )
-
         except Exception as e:
             logger.error(f"Unexpected error during evaluation: {str(e)}", exc_info=True)
             error_message = str(e)
@@ -489,12 +187,296 @@ Please ensure you:
                 parts=[Part(root=TextPart(text=result.model_dump_json(indent=2)))],
                 name="EvaluationResult",
             )
+            await updater.update_status(
+                TaskState.failed,
+                new_agent_text_message(f"Evaluation failed with error {error_message}"),
+            )
 
         finally:
             # Clean up
             logger.info("Cleaning up browser and tool provider")
             await browser_agent.stop()
             self._tool_provider.reset()
+
+        success_rate = run_benchmark_eval(
+            Config(
+                # TODO: make it model agnostic
+                api_key=os.getenv("GOOGLE_API_KEY", ""),
+                mode=EVAL_MODE,
+                trajectories_dir=str(Path(TASK_RESULT_OUTPUT_DIR)),
+                model=EVAL_MODEL,
+                output_path=EVAL_RESULT_OUTPUT_DIR,
+            )
+        )
+
+        result = EvalResult(
+            winner="white_agent" if success else "none",
+            detail={
+                "success_rate": success_rate,
+                "task_id": task_id,
+                "website": website,
+                "task_description": task_description,
+                "level": level,
+                "success": success,
+                "steps_taken": step_count,
+                "max_steps": max_steps,
+                "thoughts": thoughts,
+                "action_history": browser_agent.get_action_history(),
+                "screenshots": browser_agent.get_screenshots(),
+                "error": error_message,
+            },
+        )
+        await updater.add_artifact(
+            parts=[Part(root=TextPart(text=result.model_dump_json(indent=2)))],
+            name="EvaluationResult",
+        )
+        await updater.update_status(
+            TaskState.working,
+            new_agent_text_message(
+                f"Evaluation complete. Success: {success}, Steps taken: {step_count}/{max_steps}"
+            ),
+        )
+
+    async def _run_task(
+        self,
+        max_steps: int,
+        browser_agent: BrowserAgent,
+        updater: TaskUpdater,
+        task_description: str,
+        website: str,
+        req: EvalRequest,
+    ):
+        white_agent_url = str(req.participants["white_agent"])
+        step_count: int = 0
+        success = False
+        thoughts: list[str] = []
+        error_message: str | None = None
+        # Prepare initial prompt for white agent
+        initial_prompt = BrowserJudgePrompts.task_run_prompt(task_description, website)
+
+        error_feedback = None  # Track parse errors to provide feedback to white agent
+
+        for step in range(max_steps):
+            step_count = step + 1
+            logger.info(f"Starting step {step_count}/{max_steps}")
+
+            # Add delay between steps to avoid rate limiting (except first step)
+            if step > 0:
+                delay = 2  # 2 second delay between steps
+                logger.info(
+                    f"Waiting {delay}s before next step to avoid rate limits..."
+                )
+                await asyncio.sleep(delay)
+
+            await updater.update_status(
+                TaskState.working,
+                new_agent_text_message(f"Executing step {step_count}/{max_steps}"),
+            )
+
+            # Get current page HTML
+            html = await browser_agent.get_html(cleaned=True, format="html")
+
+            # Truncate HTML if too long (keep first 20000 chars)
+            html_truncated = html[:MAX_HTML_CONTEXT_LENGTH]
+            if len(html) > MAX_HTML_CONTEXT_LENGTH:
+                html_truncated += "\n\n[HTML truncated for length...]"
+
+            # Prepare multi-part message (text + image)
+            parts = []
+
+            # 1. Add text part with HTML and instructions
+            if step == 0:
+                text_content = initial_prompt + f"\n\nCURRENT HTML:\n{html_truncated}"
+            else:
+                # Include error feedback if previous response had parse errors
+                if error_feedback:
+                    text_content = f"""ERROR IN PREVIOUS RESPONSE:
+{error_feedback}
+
+Please try again with the correct format. Remember to wrap your JSON in <json></json> tags.
+
+CURRENT HTML:
+{html_truncated}
+
+What should we do next?"""
+                    error_feedback = None  # Clear feedback after using it
+                else:
+                    text_content = (
+                        f"CURRENT HTML:\n{html_truncated}\n\nWhat should we do next?"
+                    )
+
+            parts.append(Part(root=TextPart(text=text_content)))
+
+            # 2. Add image part (screenshot)
+            screenshot_data = browser_agent.get_latest_screenshot_base64()
+            if screenshot_data:
+                base64_string, screenshot_path = screenshot_data
+                file_part = FilePart(
+                    file=FileWithBytes(
+                        bytes=base64_string,
+                        mime_type="image/jpeg",
+                        name=Path(screenshot_path).name,
+                    )
+                )
+                parts.append(Part(root=file_part))
+            else:
+                logger.warning("No screenshot available to attach")
+
+            # Log what we're sending to white agent
+            logger.info("=" * 60)
+            logger.info(f"STEP {step_count}/{max_steps}: Sending to white agent")
+            logger.info("=" * 60)
+            logger.info(
+                f"Message parts: {len(parts)} (text + {'image' if screenshot_data else 'no image'})"
+            )
+            logger.info(
+                f"HTML length: {len(html)} chars (truncated to {len(html_truncated)} chars for agent)"
+            )
+            if screenshot_data:
+                logger.info(f"Screenshot: {Path(screenshot_path).name}")
+
+            # Log first 500 chars of HTML for debugging
+            logger.info(f"HTML preview (first 500 chars):\n{html[:500]}")
+
+            # Save full HTML to file for detailed debugging (optional via env var)
+            if os.getenv("SAVE_DEBUG_HTML", "false").lower() in (
+                "true",
+                "1",
+                "yes",
+            ):
+                debug_html_path = (
+                    f"{browser_agent.output_dir}/step_{step_count:03d}_input.html"
+                )
+                Path(debug_html_path).write_text(html)
+                logger.info(f"Saved full HTML to: {debug_html_path}")
+
+            # Send to white agent and get response
+            logger.info(f"Sending message to white agent at {white_agent_url}")
+            try:
+                response_text = await self._tool_provider.talk_to_agent(
+                    url=white_agent_url,
+                    new_conversation=(step == 0),
+                    parts=parts,
+                )
+
+                # Log full response (not truncated)
+                logger.info("=" * 60)
+                logger.info(f"STEP {step_count}/{max_steps}: Response from white agent")
+                logger.info("=" * 60)
+                logger.info(f"Full response:\n{response_text}")
+                logger.info("=" * 60)
+
+            except Exception as e:
+                error_message = f"Failed to communicate with white agent: {str(e)}"
+                logger.error(error_message)
+                break
+
+            # Parse white agent's response
+            try:
+                action = parse_white_agent_response(response_text)
+                thought = action.get("thought", "No thought provided")
+                tool = action.get("tool", "finish")
+                params = action.get("params", {})
+
+                thoughts.append(f"Step {step_count}: {thought}")
+
+                # Log parsed action details
+                logger.info(f"Parsed action:")
+                logger.info(f"  Thought: {thought}")
+                logger.info(f"  Tool: {tool}")
+                logger.info(f"  Params: {params}")
+
+                # Save response to file for debugging (optional via env var)
+                if os.getenv("SAVE_DEBUG_RESPONSES", "false").lower() in (
+                    "true",
+                    "1",
+                    "yes",
+                ):
+                    debug_response_path = f"{browser_agent.output_dir}/step_{step_count:03d}_response.json"
+                    Path(debug_response_path).write_text(json.dumps(action, indent=2))
+                    logger.info(f"Saved response to: {debug_response_path}")
+
+            except Exception as e:
+                error_message = f"Failed to parse white agent response: {str(e)}"
+                logger.error(error_message)
+                break
+
+            # Check if task is finished
+            if tool == "finish":
+                logger.info("White agent indicated task completion")
+                success = True
+                break
+
+            # Check if there was a parsing error - provide feedback and retry
+            if tool == "error":
+                error_type = params.get("error_type", "unknown")
+                raw_response = params.get("raw_response", "")
+                logger.warning(
+                    f"White agent response parsing failed ({error_type}), will retry with feedback"
+                )
+
+                # Set error feedback for next iteration
+                error_feedback = f"""Your previous response could not be parsed ({error_type}).
+
+Your response was:
+{raw_response[:500]}
+
+Please ensure you:
+1. Wrap your JSON in <json></json> tags
+2. Use valid JSON format with double quotes
+3. Include all three required fields: "thought", "tool", and "params"
+4. Use one of the valid tools: click, type, select, finish
+"""
+                # Don't execute any action, just continue to next step with feedback
+                continue
+
+            # Execute action in browser
+            try:
+                logger.info(f"Executing action: {tool} with params {params}")
+                result = await browser_agent.execute_action(tool, **params)
+
+                if not result.get("success", False):
+                    error_message = result.get(
+                        "error", "Unknown error during action execution"
+                    )
+                    logger.warning(f"Action execution failed: {error_message}")
+                    # Continue to next step rather than breaking - give agent another chance
+                else:
+                    logger.info("Action executed successfully")
+
+            except Exception as e:
+                error_message = f"Exception during action execution: {str(e)}"
+                logger.error(error_message)
+
+        # If we completed all steps without finishing, it's a failure
+        if step_count >= max_steps and not success:
+            logger.info(f"Reached max steps ({max_steps}) without completion")
+
+        return success, step_count, thoughts, error_message
+
+    def _log_evaluation_summary(
+        self,
+        task_description: str,
+        step_count: int,
+        max_steps: int,
+        success: bool,
+        thoughts: list[str],
+        action_history: list[str],
+        error_message: str | None,
+    ):
+        logger.info("=" * 60)
+        logger.info("EVALUATION SUMMARY")
+        logger.info("=" * 60)
+        logger.info(f"Task: {task_description}")
+        logger.info(f"Success: {success}")
+        logger.info(f"Steps taken: {step_count}/{max_steps}")
+        logger.info("Thoughts:")
+        for i, thought in enumerate(thoughts, 1):
+            logger.info(f"  {i}. {thought}")
+        logger.info(f"Action history: {action_history}")
+        if error_message:
+            logger.info(f"Error: {error_message}")
+        logger.info("=" * 60)
 
 
 def browser_judge_agent_card(agent_name: str, card_url: str) -> AgentCard:

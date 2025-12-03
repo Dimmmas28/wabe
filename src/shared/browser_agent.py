@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from PIL import Image
 from playwright.async_api import Browser, Page, async_playwright
 
+from green_agent.constants import TASK_RESULT_FILE_NAME, TASK_RESULT_SCREENSHOTS_FOLDER
 from shared.browser_helper import normal_launch_async, normal_new_context_async
 from shared.html_cleaner import HTMLCleaner
 
@@ -141,7 +142,7 @@ class BrowserAgent:
             return
 
         # Take initial screenshot
-        await self.take_screenshot("initial")
+        await self.take_screenshot("step_000")
 
         print(f"✓ Browser ready at {url}")
 
@@ -296,7 +297,9 @@ class BrowserAgent:
         if name is None:
             name = f"screenshot_{len(self.screenshots):03d}"
 
-        screenshot_path = self.output_dir / f"{name}.png"
+        screenshot_path = (
+            self.output_dir / TASK_RESULT_SCREENSHOTS_FOLDER / f"{name}.png"
+        )
         await self.page.screenshot(path=str(screenshot_path), full_page=True)
 
         self.screenshots.append(str(screenshot_path))
@@ -409,7 +412,7 @@ class BrowserAgent:
             },
         }
 
-        output_file = self.output_dir / f"{task_id}.json"
+        output_file = self.output_dir / f"{TASK_RESULT_FILE_NAME}.json"
         with open(output_file, "w") as f:
             json.dump(session_data, f, indent=2)
 
