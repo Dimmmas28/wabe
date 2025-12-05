@@ -10,7 +10,8 @@ from typing import Any, Dict, List, Optional
 from PIL import Image
 from playwright.async_api import Browser, Page, async_playwright
 
-from green_agent.constants import TASK_RESULT_FILE_NAME, TASK_RESULT_SCREENSHOTS_FOLDER
+from green_agent.constants import (TASK_RESULT_FILE_NAME,
+                                   TASK_RESULT_SCREENSHOTS_FOLDER)
 from shared.browser_helper import normal_launch_async, normal_new_context_async
 from shared.html_cleaner import HTMLCleaner
 

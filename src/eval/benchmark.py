@@ -1,4 +1,5 @@
 import logging
+
 from openai import BaseModel
 
 from eval.online_mind2web.run import parallel_eval

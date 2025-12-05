@@ -15,21 +15,12 @@ import sys
 from pathlib import Path
 
 import uvicorn
-
 # A2A framework
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
-from a2a.types import (
-    AgentCapabilities,
-    AgentCard,
-    AgentSkill,
-    FilePart,
-    FileWithBytes,
-    Part,
-    TaskState,
-    TextPart,
-)
+from a2a.types import (AgentCapabilities, AgentCard, AgentSkill, FilePart,
+                       FileWithBytes, Part, TaskState, TextPart)
 from a2a.utils import new_agent_text_message
 from dotenv import load_dotenv
 
@@ -43,13 +34,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Existing WABE components
 from eval.benchmark import Config, run_benchmark_eval
-from green_agent.constants import (
-    EVAL_MODE,
-    EVAL_MODEL,
-    EVAL_RESULT_OUTPUT_DIR,
-    MAX_HTML_CONTEXT_LENGTH,
-    TASK_RESULT_OUTPUT_DIR,
-)
+from green_agent.constants import (EVAL_MODE, EVAL_MODEL,
+                                   EVAL_RESULT_OUTPUT_DIR,
+                                   MAX_HTML_CONTEXT_LENGTH,
+                                   TASK_RESULT_OUTPUT_DIR)
 from green_agent.prompts import BrowserJudgePrompts
 from shared.browser_agent import BrowserAgent
 from shared.response_parser import parse_white_agent_response
