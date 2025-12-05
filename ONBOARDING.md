@@ -592,7 +592,7 @@ async def run_eval(self, req: EvalRequest, updater: TaskUpdater):
     max_steps = req.config["max_steps"]
 
     # Create browser agent
-    browser_agent = BrowserAgent(headless=False, output_dir=f".output/browser_eval_{task_id}")
+    browser_agent = BrowserAgent(headless=False, output_dir=f"{TASK_RESULT_OUTPUT_DIR}/{task_id}")
 
     # Start browser and navigate
     await browser_agent.start(website)
@@ -613,7 +613,7 @@ async def start(self, url: str):
     await self.page.goto(url, wait_until="load")
 
     # Take initial screenshot
-    await self.take_screenshot("initial")
+    await self.take_screenshot("step_000")
 ```
 
 #### 8b. Main Evaluation Loop
@@ -773,8 +773,7 @@ The loop continues until:
         name="EvaluationResult"
     )
 ```
-
-**Session saved to**: `.output/browser_eval_{task_id}/{task_id}.json`
+**Session saved to**: `{TASK_RESULT_OUTPUT_DIR}/{task_id}/{TASK_RESULT_FILE_NAME}.json`
 
 ### Step 9: Client Receives Result
 
@@ -1283,7 +1282,7 @@ def __init__(self):
    max_steps = req.config["max_steps"]
 
    # Initialize browser
-   browser_agent = BrowserAgent(headless=False, output_dir=f".output/browser_eval_{task_id}")
+   browser_agent = BrowserAgent(headless=False, output_dir=f"{TASK_RESULT_OUTPUT_DIR}/{task_id}")
    await browser_agent.start(website)
    ```
 
@@ -1509,7 +1508,7 @@ def __init__(self, headless=False, output_dir="./output"):
        await self.page.goto(url, wait_until="load")
 
        # Take initial screenshot
-       await self.take_screenshot("initial")
+       await self.take_screenshot("step_000")
    ```
 
 2. **`execute_action(tool_name, **kwargs)`** (151-260): Execute browser action
@@ -2249,8 +2248,8 @@ result = await browser_agent.execute_action("click", selector="button[type='subm
 
 **Screenshot format**:
 ```
-.output/browser_eval_{task_id}/
-  initial.png           # Before any actions
+.output/results/{task_id}/trajectory
+  step_000.png           # Before any actions
   step_001.png          # After first successful action
   step_002.png          # After second successful action
   ...
@@ -2847,21 +2846,22 @@ tail -f .logs/2025-11-19_20-23-38_app.log
 
 ### Output Directory Structure
 
-**Location**: `.output/browser_eval_{task_id}/`
+**Location**: `{TASK_RESULT_OUTPUT_DIR}/{task_id}/`
 
 **Contents**:
 ```
-.output/browser_eval_20a460a8fe1971b84411c5b1e6ac4186/
-├── 20a460a8fe1971b84411c5b1e6ac4186.json  # Session data (JSON)
-├── initial.png                            # Screenshot: initial page
-├── step_001.png                           # Screenshot: after step 1
-├── step_002.png                           # Screenshot: after step 2
-└── step_003.png                           # Screenshot: after step 3
+.output/results/20a460a8fe1971b84411c5b1e6ac4186/
+├── result.json  # Session data (JSON)
+├── trajectory/
+├───├── step_000.png                           # Screenshot: initial page
+├───├── step_001.png                           # Screenshot: after step 1
+├───├── step_002.png                           # Screenshot: after step 2
+└───└── step_003.png                           # Screenshot: after step 3
 ```
 
 ### Session JSON Format
 
-**File**: `.output/browser_eval_{task_id}/{task_id}.json`
+**File**: `{TASK_RESULT_OUTPUT_DIR}/{task_id}/{TASK_RESULT_FILE_NAME}.json`
 
 **Structure**:
 ```json
@@ -2883,10 +2883,10 @@ tail -f .logs/2025-11-19_20-23-38_app.log
   ],
 
   "screenshots": [
-    ".output/browser_eval_.../initial.png",
-    ".output/browser_eval_.../step_001.png",
-    ".output/browser_eval_.../step_002.png",
-    ".output/browser_eval_.../step_003.png"
+    ".output/results/20a460a8fe1971b84411c5b1e6ac4186/trajectory/step_000.png",
+    ".output/results/20a460a8fe1971b84411c5b1e6ac4186/trajectory/step_001.png",
+    ".output/results/20a460a8fe1971b84411c5b1e6ac4186/trajectory/step_002.png",
+    ".output/results/20a460a8fe1971b84411c5b1e6ac4186/trajectory/step_003.png"
   ],
 
   "metadata": {
@@ -2912,7 +2912,7 @@ tail -f .logs/2025-11-19_20-23-38_app.log
 
 **Solution 1**: Check screenshots
 ```bash
-open .output/browser_eval_*/step_*.png
+open .output/results/*/step_*.png
 # Look at what the agent saw
 ```
 
@@ -3157,7 +3157,7 @@ uv run agentbeats-run scenario.toml --show-logs
 tail -f .logs/*_green.log | grep -E "STEP|Action|Error"
 
 # Terminal 3: Watch screenshots being created
-watch -n 1 'ls -lht .output/browser_eval_*/step_*.png | head -5'
+watch -n 1 'ls -lht .output/results/*/step_*.png | head -5'
 ```
 
 **Post-run analysis**:
@@ -3172,7 +3172,7 @@ grep "Action execution failed" .logs/*_green.log | wc -l
 grep "Executing action:" .logs/*_green.log
 
 # See LLM thoughts
-jq '.thoughts[]' .output/browser_eval_*/*.json
+jq '.thoughts[]' .output/results/*/*.json
 ```
 
 ### Troubleshooting Common Issues

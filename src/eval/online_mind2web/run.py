@@ -5,12 +5,16 @@ import json
 import multiprocessing
 import os
 
-from eval.methods.agenttrek_eval import *
-from eval.methods.automomous_eval import *
-from eval.methods.webjudge_general_eval import *
-from eval.methods.webjudge_online_mind2web import *
-from eval.methods.webvoyager_eval import *
-from eval.utils import OpenaiEngine, extract_predication
+from dotenv import load_dotenv
+
+from eval.online_mind2web.methods.agenttrek_eval import *
+from eval.online_mind2web.methods.automomous_eval import *
+from eval.online_mind2web.methods.webjudge_general_eval import *
+from eval.online_mind2web.methods.webjudge_online_mind2web import *
+from eval.online_mind2web.methods.webvoyager_eval import *
+from eval.online_mind2web.utils import OpenaiEngine, extract_predication
+
+load_dotenv()
 
 
 def auto_eval(args, task_subset, final_predicted_labels, lock, model):
@@ -91,6 +95,9 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
             )
 
         elif args.mode == "WebJudge_Online_Mind2Web_eval":
+            print("trajectory_images_path")
+            print(trajectory_images_path)
+
             for image in sorted(
                 os.listdir(trajectory_images_path),
                 key=lambda x: int(re.findall(r"\d+", x)[0]),
@@ -172,6 +179,11 @@ def parallel_eval(args, num_workers=60):
     ]
     print(f"Evaluating {len(task_dirs)} tasks in total.")
     chunk_size = len(task_dirs) // num_workers
+    print(f"Chunk size {chunk_size}.")
+
+    if chunk_size == 0:
+        chunk_size = 1
+
     task_subsets = [
         task_dirs[i : i + chunk_size] for i in range(0, len(task_dirs), chunk_size)
     ]
@@ -197,7 +209,8 @@ def parallel_eval(args, num_workers=60):
         success_num = sum(final_predicted_labels)
 
     print("Evaluation complete.")
-    print(f"The success rate is {(success_num / len(task_dirs)) * 100}.")
+    success_rate = (success_num / len(task_dirs)) * 100
+    return success_rate
 
 
 if __name__ == "__main__":
@@ -207,22 +220,28 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mode",
         type=str,
-        default="Online_Mind2Web_eval",
+        default="WebJudge_Online_Mind2Web_eval",
         help="the mode of evaluation",
     )
     parser.add_argument("--model", type=str, default="gpt-4o")
     parser.add_argument(
         "--trajectories_dir",
         type=str,
-        required=True,
+        required=False,
+        default="C:\\Users\\DmytroSavuliak\\Desktop\\wabe\\.output\\results",
         help="Path to trajectories directory",
     )
-    parser.add_argument("--api_key", type=str, required=True, help="The api key")
+    parser.add_argument("--api_key", type=str, required=False, help="The api key")
     parser.add_argument(
-        "--output_path", type=str, required=True, help="The output path"
+        "--output_path",
+        type=str,
+        required=False,
+        default="C:\\Users\\DmytroSavuliak\\Desktop\\wabe\\.output\\eval",
+        help="The output path",
     )
     parser.add_argument("--score_threshold", type=int, default=3)
     parser.add_argument("--num_worker", type=int, default=60)
     args = parser.parse_args()
 
+    print(args)
     parallel_eval(args, args.num_worker)

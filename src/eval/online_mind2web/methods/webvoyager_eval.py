@@ -1,6 +1,6 @@
 from PIL import Image
 
-from eval.utils import encode_image
+from eval.online_mind2web.utils import encode_image
 
 MAX_IMAGE = 50
 

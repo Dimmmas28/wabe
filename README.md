@@ -123,7 +123,7 @@ docker run --rm \
 ### Output Files
 
 After running, results are available in:
-- `.output/browser_eval_*/` - Evaluation results and screenshots
+- `.output/results/` - Evaluation results and screenshots
 - `.logs/` - Agent logs with timestamps
 
 ### Docker Command Reference
@@ -228,10 +228,11 @@ max_steps = 10                                 # Maximum interaction steps
 After running an evaluation, outputs are saved to:
 
 ```
-.output/
-└── browser_eval_{task_id}/
-    ├── {task_id}.json      # Evaluation results and metadata
-    └── initial.png         # Screenshot(s) of browser state
+.output/results/
+└── {task_id}/
+    ├── result.json      # Evaluation results and metadata
+    └── trajectory    
+    └── └── step_000.png         # Screenshot(s) of browser state
 ```
 
 ### Example Output JSON
@@ -243,7 +244,7 @@ After running an evaluation, outputs are saved to:
   "final_result_response": "Task failed after 1 steps",
   "action_history": [],
   "thoughts": [],
-  "screenshots": [".output/browser_eval_.../initial.png"],
+  "screenshots": [".output/results/20a460a8fe1971b84411c5b1e6ac4186/trajectory/step_000.png"],
   "metadata": {
     "timestamp": "2025-11-23T10:56:15.079038",
     "total_steps": 0,
