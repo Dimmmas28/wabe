@@ -5,9 +5,16 @@ import tomllib
 from pathlib import Path
 from typing import Any, Dict
 
-from a2a.types import (AgentCard, DataPart, Message, Part,
-                       TaskArtifactUpdateEvent, TaskState,
-                       TaskStatusUpdateEvent, TextPart)
+from a2a.types import (
+    AgentCard,
+    DataPart,
+    Message,
+    Part,
+    TaskArtifactUpdateEvent,
+    TaskState,
+    TaskStatusUpdateEvent,
+    TextPart,
+)
 
 from agentbeats.client import send_message
 from agentbeats.models import EvalRequest

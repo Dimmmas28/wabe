@@ -8,3 +8,7 @@ __pycache__/
 .vscode/
 .logs/
 .output/
+
+# Ignore markdown files except README.md
+*.md
+!README.md

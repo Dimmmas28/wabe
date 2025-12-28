@@ -4,6 +4,24 @@ FROM mcr.microsoft.com/playwright/python:v1.55.0-noble
 # Set working directory
 WORKDIR /app
 
+# Install Node.js 22.x LTS via NodeSource repository
+RUN apt-get update && \
+    apt-get install -y ca-certificates curl gnupg && \
+    mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | \
+    gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" | \
+    tee /etc/apt/sources.list.d/nodesource.list && \
+    apt-get update && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Chromium browser and system dependencies for Playwright MCP server
+# Note: Due to a known issue in @playwright/mcp v0.0.33+ (GitHub Issue #914),
+# the browser may not be detected initially. The agent will automatically install
+# it at runtime using the MCP server's browser_install tool.
+RUN npx -y playwright install chromium --with-deps
+
 # Install build dependencies for Python packages with native extensions
 RUN apt-get update && \
     apt-get install -y build-essential && \

@@ -88,6 +88,8 @@ def run_container(tag: str, show_logs: bool = False, env_file: str = ".env"):
         "docker",
         "run",
         "--rm",  # Remove container after exit
+        "--ipc=host",  # Required for Chromium to avoid memory issues
+        "--cap-add=SYS_ADMIN",  # Required for Chromium sandbox in Docker
     ]
 
     # Handle environment variables

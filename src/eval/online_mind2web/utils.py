@@ -1,5 +1,6 @@
 import base64
 import io
+
 # from openai import APIConnectionError, APIError, RateLimitError, AzureOpenAI, OpenAI
 import os
 

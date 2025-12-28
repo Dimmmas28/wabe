@@ -169,15 +169,15 @@ WABE follows the [AgentBeats](https://github.com/google/agentbeats) evaluation f
 
 **Green Agent (Judge)** - `scenarios/web_browser/browser_judge.py`
 - Orchestrates browser automation evaluation
-- Manages Playwright browser instance
-- Sends HTML + task description to white agent via A2A protocol
+- Manages browser via MCP (Model Context Protocol)
+- Sends accessibility snapshot + task description to white agent via A2A protocol
 - Executes actions received from white agent
 - Evaluates task completion
 
 **White Agent (Participant)** - `scenarios/web_browser/white_agent.py`
-- Receives HTML and task via A2A protocol
+- Receives accessibility snapshot and task via A2A protocol
 - Uses Google Gemini 2.0 Flash (`gemini-2.0-flash-exp`) to reason about actions
-- Returns structured JSON actions (click, type, select, scroll, wait, finish)
+- Returns structured JSON with dynamically-discovered tool calls
 - Built with Google ADK (Agent Development Kit)
 
 **A2A Protocol**
@@ -190,13 +190,142 @@ WABE follows the [AgentBeats](https://github.com/google/agentbeats) evaluation f
 
 ```
 1. AgentBeats loads scenario.toml configuration
-2. Green agent opens browser → navigates to target website
-3. Green agent extracts HTML → sends to white agent
-4. White agent (LLM) analyzes HTML + task → returns action
-5. Green agent executes action in browser
+2. Green agent starts MCP server → navigates to target website
+3. Green agent extracts accessibility snapshot → sends to white agent
+4. White agent (LLM) analyzes snapshot + task → returns MCP tool call
+5. Green agent executes tool via MCP client
 6. Repeat steps 3-5 until task complete or max steps reached
 7. Green agent evaluates result → creates artifact
 ```
+
+## MCP Integration
+
+WABE uses the **Model Context Protocol (MCP)** for browser automation, replacing direct Playwright API calls with a dynamic, protocol-based architecture.
+
+### What is MCP?
+
+[Model Context Protocol](https://modelcontextprotocol.io) is a standardized protocol for connecting AI systems to external tools and data sources. WABE uses the [Playwright MCP Server](https://github.com/modelcontextprotocol/servers/tree/main/src/playwright) to provide browser automation capabilities.
+
+### Architecture: Dynamic Tool Discovery
+
+**Key Design Principles:**
+- ✅ **Zero hardcoded tools** - All browser tools discovered at runtime via MCP `tools/list`
+- ✅ **No hardcoded parameters** - Tool schemas and parameters validated against JSON Schema
+- ✅ **Future-proof** - Code adapts automatically when MCP server tools change
+- ✅ **Generic routing** - Any MCP tool callable with parameter validation
+
+**Traditional Approach (Hardcoded):**
+```python
+# ❌ Breaks if Playwright API changes
+async def click(self, selector):
+    await self.page.click(selector)
+```
+
+**MCP Approach (Dynamic):**
+```python
+# ✅ Discovers tools at runtime, validates parameters
+tools = await client.list_tools()  # Discovers 20+ browser tools
+await client.call_tool("browser_click", ref="s15")
+```
+
+### How It Works
+
+```
+┌─────────────────┐         ┌──────────────────┐
+│  BrowserAgent   │  stdin  │   MCP Server     │
+│  (Python)       │ ──────> │   (@playwright/  │
+│                 │  stdout │    mcp)          │
+│  MCPBrowserClient<─────── │                  │
+└─────────────────┘ JSON-RPC└──────────────────┘
+         │                           │
+         │  1. tools/list            │
+         │  ────────────────────────>│
+         │                           │
+         │  2. Returns tool schemas  │
+         │  <────────────────────────│
+         │                           │
+         │  3. tools/call: browser_navigate
+         │  ────────────────────────>│
+         │                           │
+         │  4. Returns result        │
+         │  <────────────────────────│
+```
+
+### Code Examples
+
+**Listing Available Tools:**
+```python
+from shared.mcp_client import MCPBrowserClient
+
+client = MCPBrowserClient()
+await client.start()
+
+# Discover all available browser tools
+tools = await client.list_tools()
+for tool in tools:
+    print(f"{tool['name']}: {tool['description']}")
+    # Example output:
+    # browser_navigate: Navigate to a URL
+    # browser_click: Click an element
+    # browser_type: Type text into an element
+    # browser_take_screenshot: Capture a screenshot
+```
+
+**Calling Tools Dynamically:**
+```python
+# Navigate to website
+await client.call_tool("browser_navigate", url="https://example.com")
+
+# Take screenshot (returns base64-encoded image)
+result = await client.call_tool("browser_take_screenshot")
+
+# Click element using accessibility snapshot ref
+await client.call_tool("browser_click", ref="s15")
+
+# Type into element
+await client.call_tool("browser_type", ref="s8", text="search query")
+```
+
+**Parameter Validation:**
+```python
+# Invalid parameters are caught before execution
+try:
+    await client.call_tool("browser_click")  # Missing required 'ref'
+except RuntimeError as e:
+    print(e)  # "Validation failed: Missing required field 'ref'"
+```
+
+### MCP Server Management
+
+The MCP server runs as a subprocess managed by `MCPBrowserClient`:
+
+- **Auto-start**: Server launches automatically on `client.start()`
+- **Auto-stop**: Server terminates on `client.stop()` (graceful shutdown)
+- **Health checks**: Process monitored for crashes
+- **Timeouts**: All JSON-RPC calls protected with timeouts
+- **Docker compatible**: Works seamlessly in containerized environments
+
+### Accessibility Snapshots
+
+Instead of raw HTML, WABE uses **accessibility snapshots** - structured representations of interactive elements:
+
+```
+textbox "Search events" [ref=s8]
+button "Search" [ref=s12]
+link "Las Vegas" [ref=s20]
+```
+
+**Benefits:**
+- Smaller context (vs. full HTML)
+- Focus on interactive elements only
+- Clear element references for targeting
+- Compatible with Mind2Web evaluation format
+
+### Resources
+
+- **MCP Specification**: https://modelcontextprotocol.io
+- **Playwright MCP Server**: https://github.com/modelcontextprotocol/servers/tree/main/src/playwright
+- **MCP Python SDK**: https://github.com/modelcontextprotocol/python-sdk
 
 ## Environment Setup
 
@@ -392,12 +521,12 @@ wabe/
 │       └── white_agent.py     # White agent (participant)
 ├── src/
 │   ├── agentbeats/            # AgentBeats framework
-│   └── green_agent/           # Shared browser automation code
-│       └── task_execution/
-│           ├── browser_agent.py    # Playwright automation (529 lines)
-│           └── utils/
-│               ├── browser_helper.py
-│               └── html_cleaner.py
+│   ├── shared/                # Shared browser automation code
+│   │   ├── mcp_client.py      # MCP protocol client (452 lines)
+│   │   ├── browser_agent.py   # Browser automation via MCP (398 lines)
+│   │   └── response_parser.py # Parse white agent responses
+│   └── green_agent/           # Green agent utilities
+│       └── prompts.py         # Dynamic tool prompt generation
 ├── data/
 │   └── tasks.json             # Task definitions
 ├── .output/                   # Evaluation results (gitignored)

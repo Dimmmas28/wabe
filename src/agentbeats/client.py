@@ -4,8 +4,7 @@ from uuid import uuid4
 
 import httpx
 from a2a.client import A2ACardResolver, ClientConfig, ClientFactory, Consumer
-from a2a.types import (DataPart, FilePart, FileWithBytes, Message, Part, Role,
-                       TextPart)
+from a2a.types import DataPart, FilePart, FileWithBytes, Message, Part, Role, TextPart
 
 DEFAULT_TIMEOUT = 300
 logger = logging.getLogger(__name__)
