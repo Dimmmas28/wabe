@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import io
 import json
@@ -8,22 +7,19 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from PIL import Image
-from playwright.async_api import Browser, Page, async_playwright
 
-from green_agent.constants import (TASK_RESULT_FILE_NAME,
-                                   TASK_RESULT_SCREENSHOTS_FOLDER)
-from shared.browser_helper import normal_launch_async, normal_new_context_async
-from shared.html_cleaner import HTMLCleaner
+from green_agent.constants import TASK_RESULT_FILE_NAME, TASK_RESULT_SCREENSHOTS_FOLDER
+from shared.mcp_client import MCPBrowserClient
 
 logger = logging.getLogger(__name__)
 
 
 class BrowserAgent:
     """
-    Bare minimum browser agent with Playwright
-    - Runs browser
-    - Defines tools
-    - Executes actions
+    Browser agent using MCP (Model Context Protocol) for browser automation
+    - Runs browser via MCP server
+    - Dynamically discovers available tools
+    - Executes actions through MCP client
     - Records action history
     - Takes screenshots
     """
@@ -34,279 +30,245 @@ class BrowserAgent:
         self.output_dir.mkdir(exist_ok=True, parents=True)
 
         # State
-        self.browser: Optional[Browser] = None
-        self.page: Optional[Page] = None
         self.action_history: List[str] = []
         self.screenshots: List[str] = []
         self.step_count: int = 0
+        self.current_url: str = ""
 
-        # Tools definition
-        self.tools = self._define_tools()
-
-        self.html_cleaner = HTMLCleaner()
-
-    def _define_tools(self) -> List[Dict[str, Any]]:
-        """Define available tools/actions"""
-        return [
-            {
-                "name": "click",
-                "description": "Click on an element",
-                "parameters": {
-                    "selector": {
-                        "type": "string",
-                        "description": "CSS selector or XPath of element to click",
-                        "required": True,
-                    }
-                },
-            },
-            {
-                "name": "type",
-                "description": "Type text into an input element",
-                "parameters": {
-                    "selector": {
-                        "type": "string",
-                        "description": "CSS selector or XPath of input element",
-                        "required": True,
-                    },
-                    "text": {
-                        "type": "string",
-                        "description": "Text to type",
-                        "required": True,
-                    },
-                },
-            },
-            {
-                "name": "select",
-                "description": "Select an option from dropdown",
-                "parameters": {
-                    "selector": {
-                        "type": "string",
-                        "description": "CSS selector or XPath of select element",
-                        "required": True,
-                    },
-                    "value": {
-                        "type": "string",
-                        "description": "Value to select",
-                        "required": True,
-                    },
-                },
-            },
-            # {
-            #     "name": "get_page_info",
-            #     "description": "Get current page URL and title",
-            #     "parameters": {},
-            # },
-        ]
-
-    async def page_on_navigation_handler(self, frame):
-        print("page_on_navigation_handler")
-
-    async def page_on_close_handler(self, page: Page):
-        logger.info("page_on_close_handler")
-
-    async def page_on_crash_handler(self, page: Page):
-        logger.info(f"Page crashed: {page.url}")
-        logger.info("Try to reload")
-        await page.reload()
-
-    async def page_on_open_handler(self, page: Page):
-        page.on("framenavigated", self.page_on_navigation_handler)
-        page.on("close", self.page_on_close_handler)
-        page.on("crash", self.page_on_crash_handler)
-
-        self.page = page
+        # MCP client for browser automation
+        self.mcp_client: Optional[MCPBrowserClient] = None
 
     async def start(self, url: str):
-        """Start browser and navigate to URL"""
-        print("🚀 Starting browser...")
-        playwright = await async_playwright().start()
-        self.browser = await normal_launch_async(
-            playwright, headless=self.headless, args=["--start-maximized"]
-        )
+        """Start browser via MCP and navigate to URL"""
+        print("🚀 Starting MCP browser client...")
 
-        context = await normal_new_context_async(self.browser)
+        # Initialize and start MCP client
+        self.mcp_client = MCPBrowserClient()
+        await self.mcp_client.start()
 
-        context.on("page", self.page_on_open_handler)
-
-        await context.new_page()
-
-        if not self.page:
-            raise ValueError("Page must exist")
+        print(f"🌐 Navigating to: {url}")
 
         try:
-            print(f"🌐 Navigating to: {url}")
-            await self.page.goto(url, wait_until="load")  # load or networkidle
+            # Navigate using MCP client
+            await self.mcp_client.call_tool("browser_navigate", url=url)
+            self.current_url = url  # Track current URL
         except Exception as e:
-            logger.info("Failed to fully load the webpage before timeout")
+            logger.info("Failed to navigate via MCP")
             logger.error(e)
+            raise
 
-            return
+        # Take initial screenshot via MCP using helper method
+        try:
+            await self._take_screenshot_via_mcp("step_000")
+        except Exception as e:
+            logger.warning(f"Failed to take initial screenshot via MCP: {e}")
 
-        # Take initial screenshot
-        await self.take_screenshot("step_000")
-
-        print(f"✓ Browser ready at {url}")
+        print(f"✓ MCP Browser ready at {url}")
 
     async def stop(self):
-        """Stop browser"""
-        if self.browser:
-            await self.browser.close()
-            print("🛑 Browser closed")
+        """Stop MCP browser client and clean up resources"""
+        if self.mcp_client:
+            await self.mcp_client.stop()
+            print("🛑 MCP Browser client stopped")
+        else:
+            logger.warning("MCP client was not initialized")
 
     async def execute_action(self, tool_name: str, **params) -> Dict[str, Any]:
         """
-        Execute an action/tool call
+        Execute an action via MCP client.
 
         Args:
-            tool_name: Name of tool to execute
+            tool_name: Name of MCP tool to execute
             **params: Parameters for the tool
 
         Returns:
             Dict with success status and result
         """
-        if not self.page:
-            return {"success": False, "error": "Browser not started"}
+        if not self.mcp_client:
+            return {"success": False, "error": "MCP client not started"}
 
         self.step_count += 1
-        print(f"\n{'=' * 60}")
-        print(f"Step {self.step_count}: {tool_name.upper()}")
-        print(f"{'=' * 60}")
+        logger.info(f"Step {self.step_count}: {tool_name.upper()}")
 
         result = {"success": False, "tool": tool_name, "params": params}
 
-        try:
-            if tool_name == "click":
-                result = await self._action_click(params.get("selector"))
+        # INTERCEPT: Check if this is a browser close request
+        is_close_action = tool_name.lower() in [
+            "browser_close",
+            "close",
+            "browser_quit",
+            "quit",
+        ]
 
-            elif tool_name == "type":
-                result = await self._action_type(
-                    params.get("selector"), params.get("text")
-                )
+        if is_close_action:
+            # DO NOT execute close on MCP/Playwright
+            # Just record it and signal shutdown
+            logger.warning(
+                "⚠️ Browser close requested - intercepting (not executing on browser)"
+            )
 
-            elif tool_name == "select":
-                result = await self._action_select(
-                    params.get("selector"), params.get("value")
-                )
-
-            elif tool_name == "get_page_info":
-                result = await self._action_get_page_info()
-
-            else:
-                result = {"success": False, "error": f"Unknown tool: {tool_name}"}
+            result["success"] = True
+            result["browser_closed"] = True
 
             # Record action in history
-            if result["success"]:
-                action_str = self._format_action_for_history(tool_name, params, result)
-                self.action_history.append(action_str)
-                print(f"✓ {action_str}")
+            action_str = self._format_action_for_history(tool_name, params)
+            self.action_history.append(action_str)
+            logger.info(f"✓ {action_str}")
 
-                # Take screenshot after successful action
-                await self.take_screenshot(f"step_{self.step_count:03d}")
-            else:
-                print(f"✗ Failed: {result.get('error', 'Unknown error')}")
+            # DO NOT take screenshot (no white page in evaluation)
+            logger.info(
+                "Skipping screenshot for browser close - session will terminate"
+            )
+
+            return result
+
+        # Normal execution path for non-close actions
+        try:
+            # Call MCP tool dynamically - no hardcoded routing
+            mcp_result = await self.mcp_client.call_tool(tool_name, **params)
+            result["success"] = True
+            result["mcp_response"] = mcp_result
+
+            # Track URL changes for navigation actions
+            if "navigate" in tool_name.lower() or "goto" in tool_name.lower():
+                self.current_url = params.get("url", self.current_url)
+
+            # Record action in Mind2Web format for evaluation
+            action_str = self._format_action_for_history(tool_name, params)
+            self.action_history.append(action_str)
+            logger.info(f"✓ {action_str}")
+
+            # Take screenshot after successful action
+            await self._take_screenshot_via_mcp(f"step_{self.step_count:03d}")
 
         except Exception as e:
-            result = {
-                "success": False,
-                "error": str(e),
-                "tool": tool_name,
-                "params": params,
-            }
-            print(f"✗ Exception: {e}")
+            result["error"] = str(e)
+            logger.error(f"✗ Failed: {e}")
 
         return result
 
-    async def _action_click(self, selector: str) -> Dict[str, Any]:
-        """Execute click action"""
-        assert self.page
-
-        await self.page.click(selector, timeout=5000)  # TODO: click with coordinates
-        await self.page.wait_for_load_state("load", timeout=5000)
-
-        return {
-            "success": True,
-            "tool": "click",
-            "selector": selector,
-            "url_after": self.page.url,
-        }
-
-    async def _action_type(self, selector: str, text: str) -> Dict[str, Any]:
-        """Execute type action"""
-        assert self.page
-
-        await self.page.fill(selector, text, timeout=5000)
-
-        # Press Enter
-        await self.page.press(selector, "Enter")
-
-        # Wait for potential navigation
-        try:
-            await self.page.wait_for_load_state("load", timeout=5000)
-        except:
-            pass  # Page might not navigate, that's okay
-
-        return {
-            "success": True,
-            "tool": "type",
-            "selector": selector,
-            "text": text,
-            "pressed_enter": True,
-        }
-
-    async def _action_select(self, selector: str, value: str) -> Dict[str, Any]:
-        """Execute select action"""
-        await self.page.select_option(selector, value, timeout=5000)
-
-        return {"success": True, "tool": "select", "selector": selector, "value": value}
-
-    async def _action_get_page_info(self) -> Dict[str, Any]:
-        """Get current page information"""
-        return {
-            "success": True,
-            "tool": "get_page_info",
-            "url": self.page.url,
-            "title": await self.page.title(),
-        }
-
-    def _format_action_for_history(
-        self, tool_name: str, params: Dict, result: Dict
-    ) -> str:
-        """Format action for history in Mind2Web style"""
-        selector = params.get("selector", "")
-
-        if tool_name == "click":
-            return f"<{selector}> -> CLICK"
-        elif tool_name == "type":
-            text = params.get("text", "")
-            return f"<{selector}> -> TYPE: {text}"
-        elif tool_name == "select":
-            value = params.get("value", "")
-            return f"<{selector}> -> SELECT: {value}"
-        else:
-            return f"{tool_name}: {params}"
-
-    async def take_screenshot(self, name: str | None = None) -> str:
+    def _format_action_for_history(self, tool_name: str, params: Dict[str, Any]) -> str:
         """
-        Take screenshot and save it
+        Format action for history in Mind2Web style.
+
+        CRITICAL: Evaluation scripts parse this exact format.
+        Format: <element_description> -> ACTION: value
+
+        Args:
+            tool_name: MCP tool name (e.g., "browser_click", "browser_type")
+            params: Tool parameters from MCP call
 
         Returns:
-            Path to saved screenshot
+            Formatted action string for action_history
         """
-        if not self.page:
-            return ""
-
-        if name is None:
-            name = f"screenshot_{len(self.screenshots):03d}"
-
-        screenshot_path = (
-            self.output_dir / TASK_RESULT_SCREENSHOTS_FOLDER / f"{name}.png"
+        # Extract element description from params
+        # Try common parameter names used by MCP tools
+        element = (
+            params.get("element")
+            or params.get("ref")
+            or params.get("selector")
+            or params.get("description")
+            or "unknown"
         )
-        await self.page.screenshot(path=str(screenshot_path), full_page=True)
 
-        self.screenshots.append(str(screenshot_path))
-        print(f"📸 Screenshot saved: {screenshot_path}")
+        # Normalize tool name to action type
+        tool_lower = tool_name.lower()
 
-        return str(screenshot_path)
+        # Handle browser close actions
+        if "close" in tool_lower or "quit" in tool_lower:
+            return "<unknown> -> BROWSER_CLOSE"
+
+        if "click" in tool_lower:
+            return f"<{element}> -> CLICK"
+        elif "type" in tool_lower or "fill" in tool_lower:
+            text = params.get("text", params.get("value", ""))
+            return f"<{element}> -> TYPE: {text}"
+        elif "select" in tool_lower:
+            value = params.get("value", "")
+            if not value:
+                values = params.get("values", [])
+                if isinstance(values, list) and values:
+                    value = values[0]
+                elif values:
+                    value = str(values)
+            return f"<{element}> -> SELECT: {value}"
+        elif "scroll" in tool_lower:
+            direction = params.get("direction", "down")
+            return f"<{element}> -> SCROLL: {direction}"
+        elif "hover" in tool_lower:
+            return f"<{element}> -> HOVER"
+        elif "navigate" in tool_lower or "goto" in tool_lower:
+            url = params.get("url", "")
+            return f"<navigation> -> GOTO: {url}"
+        else:
+            # Generic format for unknown tools
+            return f"<{element}> -> {tool_name.upper()}"
+
+    async def _take_screenshot_via_mcp(self, name: str) -> Optional[str]:
+        """
+        Take screenshot via MCP and save to filesystem.
+
+        This method captures a screenshot using the MCP client and saves it
+        to the correct path format required by evaluation scripts.
+
+        Args:
+            name: Screenshot name (e.g., "step_001")
+
+        Returns:
+            Path to saved screenshot, or None if failed
+        """
+        if not self.mcp_client:
+            logger.warning("MCP client not initialized")
+            return None
+
+        try:
+            result = await self.mcp_client.call_tool("browser_take_screenshot")
+
+            # Extract base64 data from result
+            # MCP server returns: {'content': [{'type': 'image', 'data': 'base64...'}]}
+            image_data = None
+            if isinstance(result, dict):
+                # Check for MCP content array format
+                if "content" in result and isinstance(result["content"], list):
+                    for item in result["content"]:
+                        if isinstance(item, dict) and item.get("type") == "image":
+                            image_data = item.get("data")
+                            break
+                # Fallback to simple formats
+                if not image_data:
+                    image_data = (
+                        result.get("data")
+                        or result.get("screenshot")
+                        or result.get("image")
+                    )
+            else:
+                image_data = str(result)
+
+            if not image_data:
+                logger.warning(
+                    f"No image data in screenshot response. Response keys: {result.keys() if isinstance(result, dict) else 'N/A'}"
+                )
+                return None
+
+            # Decode base64 and save to trajectory folder
+            screenshot_dir = self.output_dir / TASK_RESULT_SCREENSHOTS_FOLDER
+            screenshot_dir.mkdir(parents=True, exist_ok=True)
+            screenshot_path = screenshot_dir / f"{name}.png"
+
+            image_bytes = base64.b64decode(image_data)
+            with open(screenshot_path, "wb") as f:
+                f.write(image_bytes)
+
+            # Track in screenshots list
+            path_str = str(screenshot_path)
+            self.screenshots.append(path_str)
+            logger.info(f"📸 Screenshot saved: {screenshot_path}")
+
+            return path_str
+
+        except Exception as e:
+            logger.error(f"Failed to take screenshot via MCP: {e}")
+            return None
 
     def get_action_history(self) -> List[str]:
         """Get action history"""
@@ -373,20 +335,49 @@ class BrowserAgent:
             logger.error(f"Failed to encode screenshot {latest_screenshot_path}: {e}")
             return None
 
-    async def get_html(self, cleaned: bool = True, format: str = "html") -> str:
-        """Get current page HTML"""
-        if not self.page:
+    async def get_snapshot(self) -> str:
+        """
+        Get accessibility snapshot of current page via MCP.
+
+        Returns:
+            Accessibility tree text with element refs in format:
+            - button "Search" [ref=s12]
+            - link "About" [ref=s13]
+        """
+        if not self.mcp_client:
+            logger.error("MCP client not initialized")
             return ""
 
-        raw_html = await self.page.content()
+        try:
+            result = await self.mcp_client.call_tool("browser_snapshot")
+            # Extract snapshot text from result
+            if isinstance(result, dict) and "snapshot" in result:
+                return result["snapshot"]
+            elif isinstance(result, str):
+                return result
+            else:
+                logger.warning(f"Unexpected snapshot result format: {type(result)}")
+                return str(result)
+        except Exception as e:
+            logger.error(f"Failed to get snapshot via MCP: {e}")
+            return ""
 
-        if not cleaned:
-            return raw_html
+    async def get_tools(self) -> List[Dict[str, Any]]:
+        """
+        Get list of available MCP tools with their schemas.
 
-        if format == "text":
-            self.html_cleaner.clean_to_text_tree(raw_html)
+        Returns:
+            List of tool schemas from MCP server, or empty list if not initialized
+        """
+        if not self.mcp_client:
+            logger.warning("MCP client not initialized")
+            return []
 
-        return self.html_cleaner.clean(raw_html)
+        try:
+            return await self.mcp_client.list_tools()
+        except Exception as e:
+            logger.error(f"Failed to get tools from MCP: {e}")
+            return []
 
     def save_session(
         self,
@@ -409,7 +400,7 @@ class BrowserAgent:
             "metadata": {
                 "timestamp": datetime.now().isoformat(),
                 "total_steps": self.step_count,
-                "final_url": self.page.url if self.page else "",
+                "final_url": self.current_url,
             },
         }
 
@@ -419,172 +410,3 @@ class BrowserAgent:
 
         print(f"\n💾 Session saved to: {output_file}")
         return session_data
-
-
-# Example usage and testing
-async def demo_basic_usage():
-    """Demo: Basic browser automation"""
-    agent = BrowserAgent(headless=False, output_dir="./output/demo_output")
-
-    try:
-        # Start browser
-        await agent.start("https://www.google.com")
-
-        # Execute actions
-        await agent.execute_action(
-            "type", selector="textarea[name='q']", text="Playwright Python"
-        )
-
-        await agent.execute_action("click", selector="input[name='btnK']")
-
-        # Wait a bit for results
-        await asyncio.sleep(2)
-
-        # Get page info
-        info = await agent.execute_action("get_page_info")
-        print(f"\nCurrent page: {info.get('url')}")
-
-        # Save session
-        agent.save_session(
-            task_id="demo_001",
-            task_description="Search for Playwright Python on Google",
-            final_response="Successfully searched and got results",
-        )
-
-        print(f"\n📊 Action History:")
-        for i, action in enumerate(agent.get_action_history(), 1):
-            print(f"  {i}. {action}")
-
-    finally:
-        await agent.stop()
-
-
-async def demo_discogs_task():
-    """Demo: Discogs submission guidelines (your example)"""
-    agent = BrowserAgent(headless=False, output_dir=".output/discogs_output")
-
-    try:
-        await agent.start("https://www.discogs.com")
-
-        # Accept cookies (adjust selector based on actual page)
-        try:
-            await agent.execute_action(
-                "click", selector="button#onetrust-accept-btn-handler"
-            )
-        except:
-            print("No cookie banner or different selector")
-
-        # Navigate to help/support
-        await agent.execute_action("click", selector="a[href*='support']")
-
-        await asyncio.sleep(1)
-
-        # Look for submission guidelines
-        await agent.execute_action("click", selector="a[href*='submission-guidelines']")
-
-        # Save session
-        final_url = agent.page.url if agent.page else ""
-        agent.save_session(
-            task_id="fb7b4f784cfde003e2548fdf4e8d6b4f",
-            task_description="Open the page with an overview of the submission of releases on Discogs.",
-            final_response=f"The page with submission guidelines is open: {final_url}",
-        )
-
-        print(f"\n✓ Task completed!")
-        print(f"Final URL: {final_url}")
-
-    finally:
-        await agent.stop()
-
-
-async def demo_with_manual_control():
-    """Demo: Interactive mode - you control the actions"""
-    agent = BrowserAgent(headless=False, output_dir=".output/manual_output")
-
-    try:
-        url = input("Enter starting URL: ").strip() or "https://www.google.com"
-        await agent.start(url)
-
-        print("\n" + "=" * 60)
-        print("Available tools:")
-        for tool in agent.tools:
-            print(f"  - {tool['name']}: {tool['description']}")
-        print("=" * 60)
-
-        while True:
-            print("\nEnter command (or 'quit' to exit):")
-            print("Examples:")
-            print("  click button#search")
-            print("  type input[name='q'] hello world")
-            print("  select select#country US")
-            print("  info")
-
-            command = input("> ").strip()
-
-            if command.lower() in ["quit", "exit", "q"]:
-                break
-
-            if not command:
-                continue
-
-            # Parse command
-            parts = command.split(maxsplit=2)
-            if len(parts) < 1:
-                continue
-
-            tool = parts[0]
-
-            if tool == "click" and len(parts) >= 2:
-                await agent.execute_action("click", selector=parts[1])
-
-            elif tool == "type" and len(parts) >= 3:
-                selector = parts[1]
-                text = parts[2]
-                await agent.execute_action("type", selector=selector, text=text)
-
-            elif tool == "select" and len(parts) >= 3:
-                selector = parts[1]
-                value = parts[2]
-                await agent.execute_action("select", selector=selector, value=value)
-
-            elif tool == "info":
-                result = await agent.execute_action("get_page_info")
-                print(f"URL: {result.get('url')}")
-                print(f"Title: {result.get('title')}")
-
-            else:
-                print(f"Unknown command: {command}")
-
-        # Save session
-        task_id = input("\nEnter task ID: ").strip() or "manual_001"
-        task_desc = (
-            input("Enter task description: ").strip() or "Manual browsing session"
-        )
-
-        agent.save_session(
-            task_id=task_id,
-            task_description=task_desc,
-            final_response="Manual session completed",
-        )
-
-    finally:
-        await agent.stop()
-
-
-if __name__ == "__main__":
-    print("Choose demo:")
-    print("1. Basic Google search")
-    print("2. Discogs submission guidelines")
-    print("3. Manual control")
-
-    choice = input("\nEnter choice (1-3): ").strip()
-
-    if choice == "1":
-        asyncio.run(demo_basic_usage())
-    elif choice == "2":
-        asyncio.run(demo_discogs_task())
-    elif choice == "3":
-        asyncio.run(demo_with_manual_control())
-    else:
-        print("Running basic demo...")
-        asyncio.run(demo_basic_usage())

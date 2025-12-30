@@ -11,16 +11,27 @@ import contextlib
 import json
 import logging
 import os
+import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import uvicorn
+
 # A2A framework
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
-from a2a.types import (AgentCapabilities, AgentCard, AgentSkill, FilePart,
-                       FileWithBytes, Part, TaskState, TextPart)
+from a2a.types import (
+    AgentCapabilities,
+    AgentCard,
+    AgentSkill,
+    FilePart,
+    FileWithBytes,
+    Part,
+    TaskState,
+    TextPart,
+)
 from a2a.utils import new_agent_text_message
 from dotenv import load_dotenv
 
@@ -34,11 +45,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Existing WABE components
 from eval.benchmark import Config, run_benchmark_eval
-from green_agent.constants import (EVAL_MODE, EVAL_MODEL,
-                                   EVAL_RESULT_OUTPUT_DIR,
-                                   MAX_HTML_CONTEXT_LENGTH,
-                                   TASK_RESULT_OUTPUT_DIR)
-from green_agent.prompts import BrowserJudgePrompts
+from green_agent.constants import (
+    EVAL_MODE,
+    EVAL_MODEL,
+    EVAL_RESULT_OUTPUT_DIR,
+    MAX_HTML_CONTEXT_LENGTH,
+    TASK_RESULT_OUTPUT_DIR,
+)
+from green_agent.prompts import BrowserJudgePrompts, build_tools_prompt, build_tools_reminder
 from shared.browser_agent import BrowserAgent
 from shared.response_parser import parse_white_agent_response
 
@@ -113,18 +127,23 @@ class BrowserJudge(GreenAgent):
         max_steps = int(req.config["max_steps"])
         level = req.config.get("level", "unknown")
 
+        # Generate timestamp for unique directory names across multiple runs
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        task_id_with_timestamp = f"{task_id}_{timestamp}"
+
         await updater.update_status(
             TaskState.working,
             new_agent_text_message(f"Starting evaluation for task {task_id}"),
         )
 
-        # Initialize browser agent
-        # Use headless mode in Docker (when HEADLESS env var is set)
-        # Default to False for local development to see browser
+        # Initialize browser agent with timestamped output directory
         headless = os.getenv("HEADLESS", "false").lower() in ("true", "1", "yes")
         browser_agent = BrowserAgent(
-            headless=headless, output_dir=f"{TASK_RESULT_OUTPUT_DIR}/{task_id}"
+            headless=headless, output_dir=f"{TASK_RESULT_OUTPUT_DIR}/{task_id_with_timestamp}"
         )
+
+        # Initialize step_count for error handling
+        step_count = 0
 
         try:
             logger.info(f"Starting browser and navigating to {website}")
@@ -141,7 +160,7 @@ class BrowserJudge(GreenAgent):
             # Save browser session
             final_status = "completed" if success else "failed"
             browser_agent.save_session(
-                task_id=task_id,
+                task_id=task_id_with_timestamp,
                 task_description=task_description,
                 final_response=f"Task {final_status} after {step_count} steps",
                 thoughts=thoughts,
@@ -164,7 +183,8 @@ class BrowserJudge(GreenAgent):
             result = EvalResult(
                 winner="none",
                 detail={
-                    "task_id": task_id,
+                    "task_id": task_id_with_timestamp,
+                    "original_task_id": task_id,
                     "success": False,
                     "error": error_message,
                     "steps_taken": step_count,
@@ -186,6 +206,19 @@ class BrowserJudge(GreenAgent):
             await browser_agent.stop()
             self._tool_provider.reset()
 
+        # Clean up incomplete result directories before evaluation
+        # This prevents evaluation script from trying to process incomplete runs
+        results_dir = Path(TASK_RESULT_OUTPUT_DIR)
+        if results_dir.exists():
+            for task_dir in results_dir.iterdir():
+                if task_dir.is_dir():
+                    result_file = task_dir / "result.json"
+                    if not result_file.exists():
+                        logger.warning(
+                            f"Removing incomplete result directory: {task_dir.name}"
+                        )
+                        shutil.rmtree(task_dir)
+
         success_rate = run_benchmark_eval(
             Config(
                 # TODO: make it model agnostic
@@ -201,7 +234,8 @@ class BrowserJudge(GreenAgent):
             winner="white_agent" if success else "none",
             detail={
                 "success_rate": success_rate,
-                "task_id": task_id,
+                "task_id": task_id_with_timestamp,
+                "original_task_id": task_id,
                 "website": website,
                 "task_description": task_description,
                 "level": level,
@@ -239,8 +273,44 @@ class BrowserJudge(GreenAgent):
         success = False
         thoughts: list[str] = []
         error_message: str | None = None
+        browser_closed = False  # Track browser close state
+
+        # Get dynamic tools from MCP client
+        tools = await browser_agent.get_tools()
+        logger.info(f"Retrieved {len(tools)} tools from MCP client")
+
+        # Log tool details for debugging
+        logger.info("=" * 60)
+        logger.info("AVAILABLE TOOLS FOR WHITE AGENT:")
+        logger.info("=" * 60)
+        for tool in tools:
+            tool_name = tool.get("name", "unknown")
+            tool_desc = tool.get("description", "No description")
+            schema = tool.get("inputSchema", {})
+            required_params = schema.get("required", [])
+            properties = schema.get("properties", {})
+
+            logger.info(f"\n{tool_name}:")
+            logger.info(f"  Description: {tool_desc}")
+            if properties:
+                logger.info(f"  Parameters:")
+                for param_name, param_schema in properties.items():
+                    param_type = param_schema.get("type", "any")
+                    param_desc = param_schema.get("description", "")
+                    req_marker = (
+                        " (required)"
+                        if param_name in required_params
+                        else " (optional)"
+                    )
+                    logger.info(f"    - {param_name}: {param_type}{req_marker}")
+                    if param_desc:
+                        logger.info(f"      {param_desc}")
+        logger.info("=" * 60)
+
         # Prepare initial prompt for white agent
-        initial_prompt = BrowserJudgePrompts.task_run_prompt(task_description, website)
+        initial_prompt = BrowserJudgePrompts.task_run_prompt(
+            task_description, website, tools
+        )
 
         error_feedback = None  # Track parse errors to provide feedback to white agent
 
@@ -261,21 +331,27 @@ class BrowserJudge(GreenAgent):
                 new_agent_text_message(f"Executing step {step_count}/{max_steps}"),
             )
 
-            # Get current page HTML
-            html = await browser_agent.get_html(cleaned=True, format="html")
+            # Get current page accessibility snapshot via MCP
+            snapshot = await browser_agent.get_snapshot()
 
-            # Truncate HTML if too long (keep first 20000 chars)
-            html_truncated = html[:MAX_HTML_CONTEXT_LENGTH]
-            if len(html) > MAX_HTML_CONTEXT_LENGTH:
-                html_truncated += "\n\n[HTML truncated for length...]"
+            # Truncate snapshot if too long (keep first 20000 chars)
+            snapshot_truncated = snapshot[:MAX_HTML_CONTEXT_LENGTH]
+            if len(snapshot) > MAX_HTML_CONTEXT_LENGTH:
+                snapshot_truncated += "\n\n[Snapshot truncated for length...]"
 
             # Prepare multi-part message (text + image)
             parts = []
 
-            # 1. Add text part with HTML and instructions
+            # 1. Add text part with snapshot and instructions
             if step == 0:
-                text_content = initial_prompt + f"\n\nCURRENT HTML:\n{html_truncated}"
+                text_content = (
+                    initial_prompt + f"\n\nCURRENT PAGE SNAPSHOT:\n{snapshot_truncated}"
+                )
             else:
+                # Build full tools section for subsequent steps (same as step 0)
+                # White agent needs complete tool info on every step to understand parameters
+                tools_section = build_tools_prompt(tools)
+
                 # Include error feedback if previous response had parse errors
                 if error_feedback:
                     text_content = f"""ERROR IN PREVIOUS RESPONSE:
@@ -283,17 +359,27 @@ class BrowserJudge(GreenAgent):
 
 Please try again with the correct format. Remember to wrap your JSON in <json></json> tags.
 
-CURRENT HTML:
-{html_truncated}
+{tools_section}
+
+CURRENT PAGE SNAPSHOT:
+{snapshot_truncated}
 
 What should we do next?"""
                     error_feedback = None  # Clear feedback after using it
                 else:
-                    text_content = (
-                        f"CURRENT HTML:\n{html_truncated}\n\nWhat should we do next?"
-                    )
+                    text_content = f"""{tools_section}
+
+CURRENT PAGE SNAPSHOT:
+{snapshot_truncated}
+
+What should we do next?"""
 
             parts.append(Part(root=TextPart(text=text_content)))
+
+            # Log the actual text being sent to white agent (first 3000 chars to show full tools section)
+            logger.info(
+                f"Text content being sent (first 3000 chars):\n{text_content[:3000]}"
+            )
 
             # 2. Add image part (screenshot)
             screenshot_data = browser_agent.get_latest_screenshot_base64()
@@ -318,25 +404,25 @@ What should we do next?"""
                 f"Message parts: {len(parts)} (text + {'image' if screenshot_data else 'no image'})"
             )
             logger.info(
-                f"HTML length: {len(html)} chars (truncated to {len(html_truncated)} chars for agent)"
+                f"Snapshot length: {len(snapshot)} chars (truncated to {len(snapshot_truncated)} chars for agent)"
             )
             if screenshot_data:
                 logger.info(f"Screenshot: {Path(screenshot_path).name}")
 
-            # Log first 500 chars of HTML for debugging
-            logger.info(f"HTML preview (first 500 chars):\n{html[:500]}")
+            # Log first 500 chars of snapshot for debugging
+            logger.info(f"Snapshot preview (first 500 chars):\n{snapshot[:500]}")
 
-            # Save full HTML to file for detailed debugging (optional via env var)
+            # Save full snapshot to file for detailed debugging (optional via env var)
             if os.getenv("SAVE_DEBUG_HTML", "false").lower() in (
                 "true",
                 "1",
                 "yes",
             ):
-                debug_html_path = (
-                    f"{browser_agent.output_dir}/step_{step_count:03d}_input.html"
+                debug_snapshot_path = (
+                    f"{browser_agent.output_dir}/step_{step_count:03d}_snapshot.txt"
                 )
-                Path(debug_html_path).write_text(html)
-                logger.info(f"Saved full HTML to: {debug_html_path}")
+                Path(debug_snapshot_path).write_text(snapshot)
+                logger.info(f"Saved full snapshot to: {debug_snapshot_path}")
 
             # Send to white agent and get response
             logger.info(f"Sending message to white agent at {white_agent_url}")
@@ -423,22 +509,85 @@ Please ensure you:
                 logger.info(f"Executing action: {tool} with params {params}")
                 result = await browser_agent.execute_action(tool, **params)
 
+                # Check if browser was closed
+                if result.get("browser_closed", False):
+                    browser_closed = True
+                    logger.warning("=" * 60)
+                    logger.warning("⚠️ BROWSER CLOSE DETECTED")
+                    logger.warning("=" * 60)
+                    logger.warning(f"Tool: {tool}")
+                    logger.warning(
+                        f"Action recorded: {browser_agent.action_history[-1] if browser_agent.action_history else 'N/A'}"
+                    )
+
+                    # If browser close happened after actions were taken, consider it success
+                    # (White agent explicitly closed browser, indicating task completion)
+                    if len(browser_agent.action_history) > 0:
+                        success = True
+                        logger.warning(
+                            f"Setting success=True: browser closed after {len(browser_agent.action_history)} actions"
+                        )
+                    else:
+                        logger.warning(
+                            "Browser closed with no actions - keeping success=False"
+                        )
+
+                    logger.warning("Terminating execution loop")
+                    logger.warning("=" * 60)
+                    break
+
                 if not result.get("success", False):
-                    error_message = result.get(
+                    action_error = result.get(
                         "error", "Unknown error during action execution"
                     )
-                    logger.warning(f"Action execution failed: {error_message}")
-                    # Continue to next step rather than breaking - give agent another chance
+                    logger.warning(f"Action execution failed: {action_error}")
+
+                    # Provide feedback to white agent about validation failure
+                    error_feedback = f"""Your previous action failed with error:
+{action_error}
+
+Tool: {tool}
+Parameters you provided: {params}
+
+Please check the AVAILABLE TOOLS section for the correct required parameters.
+Most interactive tools require BOTH:
+  - "element": Human-readable description (e.g., "Search textbox")
+  - "ref": Snapshot reference (e.g., "s8")
+
+Try again with the correct parameters."""
+                    # Continue to next step with error feedback
                 else:
                     logger.info("Action executed successfully")
 
             except Exception as e:
                 error_message = f"Exception during action execution: {str(e)}"
                 logger.error(error_message)
+                # Check if exception is due to browser close
+                if "closed" in str(e).lower() or "disconnected" in str(e).lower():
+                    browser_closed = True
+
+                    # If browser close happened after actions, consider it success
+                    if len(browser_agent.action_history) > 0:
+                        success = True
+                        logger.warning(
+                            f"Browser close detected via exception - setting success=True ({len(browser_agent.action_history)} actions)"
+                        )
+                    else:
+                        logger.warning(
+                            "Browser close detected via exception with no actions - keeping success=False"
+                        )
+                    break
 
         # If we completed all steps without finishing, it's a failure
         if step_count >= max_steps and not success:
             logger.info(f"Reached max steps ({max_steps}) without completion")
+
+        # Log browser close termination
+        if browser_closed:
+            logger.info(
+                f"Execution terminated at step {step_count} due to browser close"
+            )
+            logger.info("Task outcome will be determined by post-execution evaluation")
 
         return success, step_count, thoughts, error_message
 
