@@ -52,7 +52,10 @@ from green_agent.constants import (
     MAX_HTML_CONTEXT_LENGTH,
     TASK_RESULT_OUTPUT_DIR,
 )
-from green_agent.prompts import BrowserJudgePrompts, build_tools_prompt, build_tools_reminder
+from green_agent.prompts import (
+    BrowserJudgePrompts,
+    build_tools_prompt,
+)
 from shared.browser_agent import BrowserAgent
 from shared.response_parser import parse_white_agent_response
 
@@ -139,7 +142,8 @@ class BrowserJudge(GreenAgent):
         # Initialize browser agent with timestamped output directory
         headless = os.getenv("HEADLESS", "false").lower() in ("true", "1", "yes")
         browser_agent = BrowserAgent(
-            headless=headless, output_dir=f"{TASK_RESULT_OUTPUT_DIR}/{task_id_with_timestamp}"
+            headless=headless,
+            output_dir=f"{TASK_RESULT_OUTPUT_DIR}/{task_id_with_timestamp}",
         )
 
         # Initialize step_count for error handling
@@ -376,9 +380,9 @@ What should we do next?"""
 
             parts.append(Part(root=TextPart(text=text_content)))
 
-            # Log the actual text being sent to white agent (first 3000 chars to show full tools section)
+            # Log the actual text being sent to white agent (first 300 chars to show full tools section)
             logger.info(
-                f"Text content being sent (first 3000 chars):\n{text_content[:3000]}"
+                f"Text content being sent (first 300 chars):\n{text_content[:300]}"
             )
 
             # 2. Add image part (screenshot)

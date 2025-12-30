@@ -8,6 +8,7 @@ enabling browser automation via the Model Context Protocol.
 import asyncio
 import json
 import logging
+import platform
 import subprocess
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -94,6 +95,8 @@ class MCPBrowserClient:
             # Launch MCP server via npx
             # Use chromium browser installed via 'npx playwright install chromium' in Dockerfile
             # The MCP server will find the browser automatically in its default location
+            is_windows = platform.system() == "Windows"
+
             self.server_process = subprocess.Popen(
                 [
                     "npx",
@@ -107,6 +110,7 @@ class MCPBrowserClient:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                shell=is_windows,
             )
             # Give the server a moment to start
             await asyncio.sleep(0.5)
@@ -322,8 +326,7 @@ class MCPBrowserClient:
         self.server_process.stdin.flush()
         logger.debug(f"Sent JSON-RPC request: {request}")
 
-        # Read response from server with timeout (30s for browser operations)
-        response = await self._read_response(timeout=30.0)
+        response = await self._read_response(timeout=60.0)
 
         # Check for JSON-RPC error
         if "error" in response:
