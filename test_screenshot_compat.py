@@ -3,6 +3,7 @@
 Unit test to verify get_latest_screenshot_base64() works with MCP screenshot format.
 Tests the compatibility without requiring full MCP server startup.
 """
+
 import base64
 import sys
 from pathlib import Path
@@ -19,7 +20,7 @@ def test_screenshot_base64_compatibility():
     )
 
     # Create agent
-    agent = BrowserAgent(headless=True, output_dir=".output/test_screenshot_compat")
+    agent = BrowserAgent(output_dir=".output/test_screenshot_compat")
 
     # Simulate what _take_screenshot_via_mcp() does:
     # 1. Creates a screenshot directory
@@ -51,9 +52,9 @@ def test_screenshot_base64_compatibility():
     base64_str, file_path = result
 
     assert base64_str, "base64 string is empty"
-    assert file_path == str(
-        test_screenshot_path
-    ), f"file_path mismatch: {file_path} != {test_screenshot_path}"
+    assert file_path == str(test_screenshot_path), (
+        f"file_path mismatch: {file_path} != {test_screenshot_path}"
+    )
 
     # Verify it's valid base64
     try:

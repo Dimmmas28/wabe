@@ -11,8 +11,12 @@ import logging
 import platform
 import subprocess
 from typing import Any, Dict, List, Optional, Tuple
+import tempfile
+import uuid
 
 logger = logging.getLogger(__name__)
+
+_startup_lock = asyncio.Lock()
 
 
 class MCPBrowserClient:
@@ -43,17 +47,16 @@ class MCPBrowserClient:
         >>> await client.stop()  # Clean shutdown
     """
 
-    def __init__(self):
+    # Class-level counter for unique instance IDs
+    _instance_counter: int = 0
+
+    def __init__(self, instance_id: Optional[str] = None):
         """
         Initialize the MCP browser client.
 
-        Sets up all internal state for MCP communication. The MCP server
-        subprocess is not started until start() is called.
-
-        After initialization, the client is ready to call start(), which will:
-        - Launch the MCP server subprocess
-        - Perform protocol handshake
-        - Discover available tools
+        Args:
+            instance_id: Optional unique identifier for this instance.
+                        If not provided, a UUID will be generated.
         """
         self.server_process: Optional[subprocess.Popen] = None
         self._message_id: int = 0
@@ -61,42 +64,48 @@ class MCPBrowserClient:
         self._server_info: Optional[Dict[str, Any]] = None
         self._tools_cache: Optional[List[Dict[str, Any]]] = None
         self._tools_by_name: Dict[str, Dict[str, Any]] = {}
-        logger.info("MCPBrowserClient initialized")
+
+        # Generate unique instance ID for isolated browser profile
+        if instance_id is None:
+            MCPBrowserClient._instance_counter += 1
+            self._instance_id = (
+                f"browser_{MCPBrowserClient._instance_counter}_{uuid.uuid4().hex[:8]}"
+            )
+        else:
+            self._instance_id = instance_id
+
+        # Create unique user data directory for this browser instance
+        self._user_data_dir: Optional[str] = None
+
+        logger.info(
+            f"MCPBrowserClient initialized with instance_id: {self._instance_id}"
+        )
 
     async def start(self) -> None:
         """
-        Start the MCP server subprocess.
-
-        This method will launch the Playwright MCP Server as a subprocess
-        and establish communication channels via stdin/stdout pipes.
-
-        The server is launched with:
-        - Chromium browser in headless mode
-        - No sandbox (required for Docker)
-        - JSON-RPC communication via stdio
-
-        After subprocess launch, performs MCP protocol handshake and
-        discovers available tools automatically.
-
-        Raises:
-            RuntimeError: If server fails to start, handshake fails, or
-                         server process exits prematurely
-
-        Example:
-            >>> client = MCPBrowserClient()
-            >>> await client.start()  # Server now running, tools discovered
+        Start the MCP server subprocess with an isolated browser instance.
         """
         if self.server_process is not None:
             logger.warning("MCP server already running")
             return
 
-        logger.info("Starting MCP server subprocess")
+        async with _startup_lock:
+            await self._start_server_internal()
+
+    async def _start_server_internal(self) -> None:
+        """Internal method to start the server (called within lock)."""
+        logger.info(f"Starting MCP server subprocess for instance {self._instance_id}")
+
         try:
-            # Launch MCP server via npx
-            # Use chromium browser installed via 'npx playwright install chromium' in Dockerfile
-            # The MCP server will find the browser automatically in its default location
+            # Create a unique temporary directory for this browser's user data
+            self._user_data_dir = tempfile.mkdtemp(
+                prefix=f"mcp_browser_{self._instance_id}_"
+            )
+            logger.info(f"Created user data directory: {self._user_data_dir}")
+
             is_windows = platform.system() == "Windows"
 
+            # Launch MCP server with unique user data directory
             self.server_process = subprocess.Popen(
                 [
                     "npx",
@@ -105,17 +114,18 @@ class MCPBrowserClient:
                     "--browser",
                     "chromium",
                     "--headless",  # Run in headless mode for Docker
-                    "--no-sandbox",  # Required when running as root in Docker
+                    "--no-sandbox",
+                    "--user-data-dir",
+                    self._user_data_dir,
                 ],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 shell=is_windows,
             )
-            # Give the server a moment to start
-            await asyncio.sleep(0.5)
 
-            # Check if process started successfully
+            await asyncio.sleep(2.0)
+
             if self.server_process.poll() is not None:
                 stderr = (
                     self.server_process.stderr.read().decode()
@@ -125,47 +135,43 @@ class MCPBrowserClient:
                 raise RuntimeError(f"MCP server failed to start: {stderr}")
 
             logger.info(f"MCP server started with PID {self.server_process.pid}")
-
-            # Perform MCP initialization handshake
             await self._initialize()
+
         except Exception as e:
             logger.error(f"Failed to start MCP server: {e}")
+            await self._cleanup_user_data_dir()
             self.server_process = None
             raise RuntimeError(f"MCP server startup failed: {e}") from e
+
+    async def _cleanup_user_data_dir(self) -> None:
+        """Clean up the temporary user data directory."""
+        if self._user_data_dir:
+            import shutil
+
+            try:
+                shutil.rmtree(self._user_data_dir, ignore_errors=True)
+                logger.info(f"Cleaned up user data directory: {self._user_data_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up user data directory: {e}")
+            self._user_data_dir = None
 
     async def stop(self) -> None:
         """
         Stop the MCP server subprocess and clean up resources.
-
-        This method ensures proper cleanup of the server process and
-        any associated resources using graceful shutdown with fallback:
-
-        1. Send SIGTERM (graceful termination)
-        2. Wait up to 5 seconds for process to exit
-        3. Force kill with SIGKILL if still running
-        4. Clear internal state
-
-        Safe to call multiple times (idempotent).
-
-        Example:
-            >>> await client.stop()  # Server stopped, resources cleaned
         """
         if self.server_process is None:
             logger.warning("No MCP server to stop")
             return
 
-        logger.info("Stopping MCP server subprocess")
+        logger.info(f"Stopping MCP server subprocess for instance {self._instance_id}")
         try:
-            # Terminate the process gracefully
             self.server_process.terminate()
 
-            # Wait up to 5 seconds for graceful shutdown
             for _ in range(10):
                 if self.server_process.poll() is not None:
                     break
                 await asyncio.sleep(0.5)
 
-            # Force kill if still running
             if self.server_process.poll() is None:
                 logger.warning("MCP server did not terminate gracefully, forcing kill")
                 self.server_process.kill()
@@ -176,6 +182,9 @@ class MCPBrowserClient:
             logger.error(f"Error stopping MCP server: {e}")
         finally:
             self.server_process = None
+            self._initialized = False
+            # Clean up the user data directory
+            await self._cleanup_user_data_dir()
 
     async def _read_response(self, timeout: float = 5.0) -> Dict[str, Any]:
         """

@@ -24,8 +24,7 @@ class BrowserAgent:
     - Takes screenshots
     """
 
-    def __init__(self, headless: bool = False, output_dir: str = "./output"):
-        self.headless = headless
+    def __init__(self, output_dir: str = "./output"):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True, parents=True)
 

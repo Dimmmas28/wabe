@@ -8,8 +8,16 @@ endpoint = "http://127.0.0.1:9019"
 cmd = "uv run python scenarios/web_browser/white_agent.py --host 127.0.0.1 --port 9019"
 
 [config]
+max_steps = 10
+
+[[tasks]]
 task_id = "20a460a8fe1971b84411c5b1e6ac4186"
 website = "https://www.stubhub.com/"
 task = "Show theatre events for Las Vegas and select one."
-max_steps = 10
+level = "easy"
+
+[[tasks]]
+task_id = "561693d6eec7bbfba3fefe9e4b26decb"
+website = "https://www.marriott.com/"
+task = "Browse Marriott Bonvoy credit cards on Marriott."
 level = "easy"
