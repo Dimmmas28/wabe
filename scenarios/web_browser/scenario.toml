@@ -21,3 +21,9 @@ task_id = "561693d6eec7bbfba3fefe9e4b26decb"
 website = "https://www.marriott.com/"
 task = "Browse Marriott Bonvoy credit cards on Marriott."
 level = "easy"
+
+[[tasks]]
+task_id = "b6d10e9bd19b4009a02dea0e98f4e1ae"
+website = "https://www.foxsports.com/"
+task = "Check the current standings for MLS on Fox Sports."
+level = "easy"

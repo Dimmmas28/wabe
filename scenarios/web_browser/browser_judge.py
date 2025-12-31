@@ -52,6 +52,7 @@ from green_agent.constants import (
     EVAL_MODEL,
     EVAL_RESULT_OUTPUT_DIR,
     MAX_HTML_CONTEXT_LENGTH,
+    MAX_PARALLEL_TASKS,
     TASK_RESULT_OUTPUT_DIR,
 )
 from green_agent.prompts import (
@@ -157,11 +158,19 @@ class BrowserJudge(GreenAgent):
             ),
         )
 
-        # Run all tasks in parallel
-        logger.info(f"Running {len(merged_tasks)} tasks in parallel")
+        # Run all tasks in parallel with concurrency limit
+        logger.info(
+            f"Running {len(merged_tasks)} tasks in parallel (max {MAX_PARALLEL_TASKS} concurrent)"
+        )
+        semaphore = asyncio.Semaphore(MAX_PARALLEL_TASKS)
+
+        async def run_with_semaphore(task_config: dict, task_idx: int):
+            async with semaphore:
+                return await self._run_single_task(task_config, req, updater, task_idx)
+
         results = await asyncio.gather(
             *[
-                self._run_single_task(task_config, req, updater, task_idx)
+                run_with_semaphore(task_config, task_idx)
                 for task_idx, task_config in enumerate(merged_tasks)
             ],
             return_exceptions=True,
