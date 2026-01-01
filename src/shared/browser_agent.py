@@ -24,8 +24,7 @@ class BrowserAgent:
     - Takes screenshots
     """
 
-    def __init__(self, headless: bool = False, output_dir: str = "./output"):
-        self.headless = headless
+    def __init__(self, output_dir: str = "./output"):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True, parents=True)
 
@@ -40,13 +39,21 @@ class BrowserAgent:
 
     async def start(self, url: str):
         """Start browser via MCP and navigate to URL"""
-        print("🚀 Starting MCP browser client...")
+        logger.info("🚀 Starting MCP browser client...")
 
         # Initialize and start MCP client
         self.mcp_client = MCPBrowserClient()
         await self.mcp_client.start()
 
-        print(f"🌐 Navigating to: {url}")
+        logger.info("Installing browser")
+        try:
+            await self.mcp_client.call_tool("browser_install")
+        except Exception as e:
+            logger.info("Failed to install browser")
+            logger.error(e)
+            raise
+
+        logger.info(f"🌐 Navigating to: {url}")
 
         try:
             # Navigate using MCP client

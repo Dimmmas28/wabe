@@ -227,16 +227,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--trajectories_dir",
         type=str,
-        required=False,
-        default="C:\\Users\\DmytroSavuliak\\Desktop\\wabe\\.output\\results",
+        required=True,
         help="Path to trajectories directory",
     )
     parser.add_argument("--api_key", type=str, required=False, help="The api key")
     parser.add_argument(
         "--output_path",
         type=str,
-        required=False,
-        default="C:\\Users\\DmytroSavuliak\\Desktop\\wabe\\.output\\eval",
+        required=True,
         help="The output path",
     )
     parser.add_argument("--score_threshold", type=int, default=3)

@@ -13,8 +13,10 @@ import logging
 import os
 import shutil
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import uvicorn
 
@@ -50,9 +52,13 @@ from green_agent.constants import (
     EVAL_MODEL,
     EVAL_RESULT_OUTPUT_DIR,
     MAX_HTML_CONTEXT_LENGTH,
+    MAX_PARALLEL_TASKS,
     TASK_RESULT_OUTPUT_DIR,
 )
-from green_agent.prompts import BrowserJudgePrompts, build_tools_prompt, build_tools_reminder
+from green_agent.prompts import (
+    BrowserJudgePrompts,
+    build_tools_prompt,
+)
 from shared.browser_agent import BrowserAgent
 from shared.response_parser import parse_white_agent_response
 
@@ -66,25 +72,38 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class TaskResult:
+    """Result of a single task execution."""
+
+    task_id: str
+    task_id_with_timestamp: str
+    website: str
+    task_description: str
+    level: str
+    success: bool
+    step_count: int
+    max_steps: int
+    thoughts: list[str]
+    action_history: list[str]
+    screenshots: list[str]
+    error_message: str | None
+
+
 class BrowserJudge(GreenAgent):
     """
     Green agent that evaluates white agents on web browsing tasks.
 
     This agent:
-    1. Receives an evaluation request with white agent URL and task config
-    2. Launches a browser and navigates to the target website
-    3. Sends HTML + task description to white agent
-    4. Receives action from white agent
-    5. Executes action in browser
-    6. Repeats until task completes or max steps reached
-    7. Returns evaluation result
+    1. Receives an evaluation request with white agent URL and task configs
+    2. Runs multiple tasks in parallel, each with isolated browser and tool provider
+    3. Returns aggregated evaluation results
     """
 
     def __init__(self):
         """Initialize the Browser Judge agent."""
         self._required_roles = ["white_agent"]
-        self._required_config_keys = ["task_id", "website", "task", "max_steps"]
-        self._tool_provider = ToolProvider()
+        self._required_task_keys = ["task_id", "website", "task"]
         logger.info("BrowserJudge initialized")
 
     def validate_request(self, request: EvalRequest) -> tuple[bool, str]:
@@ -102,17 +121,23 @@ class BrowserJudge(GreenAgent):
         if missing_roles:
             return False, f"Missing required participant roles: {missing_roles}"
 
-        # Check for required configuration keys
-        missing_config = set(self._required_config_keys) - set(request.config.keys())
-        if missing_config:
-            return False, f"Missing required config keys: {missing_config}"
+        # Get tasks list (backward compatibility: if no tasks, use config as single task)
+        tasks = request.tasks if request.tasks else [request.config]
 
-        logger.info(f"Request validation passed: {request}")
+        # Validate each task has required keys
+        for i, task in enumerate(tasks):
+            # Merge base config with task-specific config
+            merged_task = {**request.config, **task}
+            missing_keys = set(self._required_task_keys) - set(merged_task.keys())
+            if missing_keys:
+                return False, f"Task {i} missing required keys: {missing_keys}"
+
+        logger.info(f"Request validation passed: {len(tasks)} task(s)")
         return True, "ok"
 
     async def run_eval(self, req: EvalRequest, updater: TaskUpdater) -> None:
         """
-        Run the browser task evaluation.
+        Run the browser task evaluation for multiple tasks in parallel.
 
         Args:
             req: The evaluation request containing participants and config
@@ -120,41 +145,195 @@ class BrowserJudge(GreenAgent):
         """
         logger.info(f"Starting browser evaluation: {req}")
 
-        # Extract configuration
-        task_id = req.config["task_id"]
-        website = req.config["website"]
-        task_description = req.config["task"]
-        max_steps = int(req.config["max_steps"])
-        level = req.config.get("level", "unknown")
+        # Get tasks list (backward compatibility: if no tasks, use config as single task)
+        tasks_config = req.tasks if req.tasks else [req.config]
 
-        # Generate timestamp for unique directory names across multiple runs
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        task_id_with_timestamp = f"{task_id}_{timestamp}"
+        # Merge base config with each task config
+        merged_tasks = [{**req.config, **task} for task in tasks_config]
 
         await updater.update_status(
             TaskState.working,
-            new_agent_text_message(f"Starting evaluation for task {task_id}"),
+            new_agent_text_message(
+                f"Starting evaluation for {len(merged_tasks)} task(s)"
+            ),
         )
 
-        # Initialize browser agent with timestamped output directory
-        headless = os.getenv("HEADLESS", "false").lower() in ("true", "1", "yes")
+        # Run all tasks in parallel with concurrency limit
+        logger.info(
+            f"Running {len(merged_tasks)} tasks in parallel (max {MAX_PARALLEL_TASKS} concurrent)"
+        )
+        semaphore = asyncio.Semaphore(MAX_PARALLEL_TASKS)
+
+        async def run_with_semaphore(task_config: dict, task_idx: int):
+            async with semaphore:
+                return await self._run_single_task(task_config, req, updater, task_idx)
+
+        results = await asyncio.gather(
+            *[
+                run_with_semaphore(task_config, task_idx)
+                for task_idx, task_config in enumerate(merged_tasks)
+            ],
+            return_exceptions=True,
+        )
+
+        # Process results
+        task_results: list[TaskResult] = []
+        for i, result in enumerate(results):
+            if isinstance(result, BaseException):
+                logger.error(f"Task {i} failed with exception: {result}")
+                # Create error result
+                task_config = merged_tasks[i]
+                task_results.append(
+                    TaskResult(
+                        task_id=task_config.get("task_id", f"task_{i}"),
+                        task_id_with_timestamp=f"{task_config.get('task_id', f'task_{i}')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                        website=task_config.get("website", ""),
+                        task_description=task_config.get("task", ""),
+                        level=task_config.get("level", "unknown"),
+                        success=False,
+                        step_count=0,
+                        max_steps=int(task_config.get("max_steps", 10)),
+                        thoughts=[],
+                        action_history=[],
+                        screenshots=[],
+                        error_message=str(result),
+                    )
+                )
+            elif isinstance(result, TaskResult):
+                task_results.append(result)
+
+        # Run benchmark evaluation once after all tasks complete
+        success_rate = self._run_final_evaluation()
+
+        # Create aggregated result
+        successful_tasks = sum(1 for r in task_results if r.success)
+        total_tasks = len(task_results)
+
+        aggregated_result = EvalResult(
+            winner="white_agent" if successful_tasks > 0 else "none",
+            detail={
+                "success_rate": success_rate,
+                "successful_tasks": successful_tasks,
+                "total_tasks": total_tasks,
+                "tasks": [
+                    {
+                        "task_id": r.task_id,
+                        "task_id_with_timestamp": r.task_id_with_timestamp,
+                        "website": r.website,
+                        "task_description": r.task_description,
+                        "level": r.level,
+                        "success": r.success,
+                        "steps_taken": r.step_count,
+                        "max_steps": r.max_steps,
+                        "thoughts": r.thoughts,
+                        "action_history": r.action_history,
+                        "screenshots": r.screenshots,
+                        "error": r.error_message,
+                    }
+                    for r in task_results
+                ],
+            },
+        )
+
+        await updater.add_artifact(
+            parts=[
+                Part(root=TextPart(text=aggregated_result.model_dump_json(indent=2)))
+            ],
+            name="EvaluationResult",
+        )
+        await updater.update_status(
+            TaskState.working,
+            new_agent_text_message(
+                f"Evaluation complete. {successful_tasks}/{total_tasks} tasks successful. Success rate: {success_rate}"
+            ),
+        )
+
+    def _run_final_evaluation(self) -> float:
+        """Run benchmark evaluation once after all tasks complete."""
+        # Clean up incomplete result directories before evaluation
+        results_dir = Path(TASK_RESULT_OUTPUT_DIR)
+        if results_dir.exists():
+            for task_dir in results_dir.iterdir():
+                if task_dir.is_dir():
+                    result_file = task_dir / "result.json"
+                    if not result_file.exists():
+                        logger.warning(
+                            f"Removing incomplete result directory: {task_dir.name}"
+                        )
+                        shutil.rmtree(task_dir)
+
+        success_rate = run_benchmark_eval(
+            Config(
+                api_key=os.getenv("GOOGLE_API_KEY", ""),
+                mode=EVAL_MODE,
+                trajectories_dir=str(Path(TASK_RESULT_OUTPUT_DIR)),
+                model=EVAL_MODEL,
+                output_path=EVAL_RESULT_OUTPUT_DIR,
+            )
+        )
+        return success_rate
+
+    async def _run_single_task(
+        self,
+        task_config: dict[str, Any],
+        req: EvalRequest,
+        updater: TaskUpdater,
+        task_idx: int,
+    ) -> TaskResult:
+        """
+        Run a single task with isolated browser and tool provider.
+
+        Args:
+            task_config: Configuration for this specific task
+            req: The original evaluation request (for participants)
+            updater: TaskUpdater for status updates
+            task_idx: Index of this task (for logging)
+
+        Returns:
+            TaskResult with the outcome of this task
+        """
+        # Extract task configuration
+        task_id = task_config["task_id"]
+        website = task_config["website"]
+        task_description = task_config["task"]
+        max_steps = int(task_config.get("max_steps", 10))
+        level = task_config.get("level", "unknown")
+
+        # Generate timestamp for unique directory
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        task_id_with_timestamp = f"{task_id}_{timestamp}"
+
+        logger.info(f"[Task {task_idx}] Starting task: {task_id}")
+
+        await updater.update_status(
+            TaskState.working,
+            new_agent_text_message(f"[Task {task_idx}] Starting: {task_id}"),
+        )
+
+        # Create isolated resources for this task
+        tool_provider = ToolProvider()
         browser_agent = BrowserAgent(
-            headless=headless, output_dir=f"{TASK_RESULT_OUTPUT_DIR}/{task_id_with_timestamp}"
+            output_dir=f"{TASK_RESULT_OUTPUT_DIR}/{task_id_with_timestamp}",
         )
 
-        # Initialize step_count for error handling
         step_count = 0
+        success = False
+        thoughts: list[str] = []
+        error_message: str | None = None
 
         try:
-            logger.info(f"Starting browser and navigating to {website}")
-            await updater.update_status(
-                TaskState.working,
-                new_agent_text_message(f"Opening browser at {website}"),
-            )
+            logger.info(f"[Task {task_idx}] Starting browser at {website}")
             await browser_agent.start(website)
 
-            success, step_count, thoughts, error_message = await self._run_task(
-                max_steps, browser_agent, updater, task_description, website, req
+            success, step_count, thoughts, error_message = await self._run_task_loop(
+                max_steps=max_steps,
+                browser_agent=browser_agent,
+                tool_provider=tool_provider,
+                updater=updater,
+                task_description=task_description,
+                website=website,
+                white_agent_url=str(req.participants["white_agent"]),
+                task_idx=task_idx,
             )
 
             # Save browser session
@@ -174,114 +353,58 @@ class BrowserJudge(GreenAgent):
                 thoughts,
                 browser_agent.get_action_history(),
                 error_message,
+                task_idx,
             )
+
         except Exception as e:
-            logger.error(f"Unexpected error during evaluation: {str(e)}", exc_info=True)
+            logger.error(f"[Task {task_idx}] Unexpected error: {str(e)}", exc_info=True)
             error_message = str(e)
-
-            # Try to send error result
-            result = EvalResult(
-                winner="none",
-                detail={
-                    "task_id": task_id_with_timestamp,
-                    "original_task_id": task_id,
-                    "success": False,
-                    "error": error_message,
-                    "steps_taken": step_count,
-                },
-            )
-
-            await updater.add_artifact(
-                parts=[Part(root=TextPart(text=result.model_dump_json(indent=2)))],
-                name="EvaluationResult",
-            )
-            await updater.update_status(
-                TaskState.failed,
-                new_agent_text_message(f"Evaluation failed with error {error_message}"),
-            )
+            success = False
 
         finally:
-            # Clean up
-            logger.info("Cleaning up browser and tool provider")
+            logger.info(f"[Task {task_idx}] Cleaning up browser")
             await browser_agent.stop()
-            self._tool_provider.reset()
 
-        # Clean up incomplete result directories before evaluation
-        # This prevents evaluation script from trying to process incomplete runs
-        results_dir = Path(TASK_RESULT_OUTPUT_DIR)
-        if results_dir.exists():
-            for task_dir in results_dir.iterdir():
-                if task_dir.is_dir():
-                    result_file = task_dir / "result.json"
-                    if not result_file.exists():
-                        logger.warning(
-                            f"Removing incomplete result directory: {task_dir.name}"
-                        )
-                        shutil.rmtree(task_dir)
-
-        success_rate = run_benchmark_eval(
-            Config(
-                # TODO: make it model agnostic
-                api_key=os.getenv("GOOGLE_API_KEY", ""),
-                mode=EVAL_MODE,
-                trajectories_dir=str(Path(TASK_RESULT_OUTPUT_DIR)),
-                model=EVAL_MODEL,
-                output_path=EVAL_RESULT_OUTPUT_DIR,
-            )
+        return TaskResult(
+            task_id=task_id,
+            task_id_with_timestamp=task_id_with_timestamp,
+            website=website,
+            task_description=task_description,
+            level=level,
+            success=success,
+            step_count=step_count,
+            max_steps=max_steps,
+            thoughts=thoughts,
+            action_history=browser_agent.get_action_history(),
+            screenshots=browser_agent.get_screenshots(),
+            error_message=error_message,
         )
 
-        result = EvalResult(
-            winner="white_agent" if success else "none",
-            detail={
-                "success_rate": success_rate,
-                "task_id": task_id_with_timestamp,
-                "original_task_id": task_id,
-                "website": website,
-                "task_description": task_description,
-                "level": level,
-                "success": success,
-                "steps_taken": step_count,
-                "max_steps": max_steps,
-                "thoughts": thoughts,
-                "action_history": browser_agent.get_action_history(),
-                "screenshots": browser_agent.get_screenshots(),
-                "error": error_message,
-            },
-        )
-        await updater.add_artifact(
-            parts=[Part(root=TextPart(text=result.model_dump_json(indent=2)))],
-            name="EvaluationResult",
-        )
-        await updater.update_status(
-            TaskState.working,
-            new_agent_text_message(
-                f"Evaluation complete. Success: {success}, Steps taken: {step_count}/{max_steps}"
-            ),
-        )
-
-    async def _run_task(
+    async def _run_task_loop(
         self,
         max_steps: int,
         browser_agent: BrowserAgent,
+        tool_provider: ToolProvider,
         updater: TaskUpdater,
         task_description: str,
         website: str,
-        req: EvalRequest,
+        white_agent_url: str,
+        task_idx: int,
     ):
-        white_agent_url = str(req.participants["white_agent"])
+        """Run the main task execution loop."""
         step_count: int = 0
         success = False
         thoughts: list[str] = []
         error_message: str | None = None
-        browser_closed = False  # Track browser close state
+        browser_closed = False
 
         # Get dynamic tools from MCP client
         tools = await browser_agent.get_tools()
-        logger.info(f"Retrieved {len(tools)} tools from MCP client")
+        logger.info(f"[Task {task_idx}] Retrieved {len(tools)} tools from MCP client")
 
         # Log tool details for debugging
         logger.info("=" * 60)
-        logger.info("AVAILABLE TOOLS FOR WHITE AGENT:")
+        logger.info(f"[Task {task_idx}] AVAILABLE TOOLS FOR WHITE AGENT:")
         logger.info("=" * 60)
         for tool in tools:
             tool_name = tool.get("name", "unknown")
@@ -293,7 +416,7 @@ class BrowserJudge(GreenAgent):
             logger.info(f"\n{tool_name}:")
             logger.info(f"  Description: {tool_desc}")
             if properties:
-                logger.info(f"  Parameters:")
+                logger.info("  Parameters:")
                 for param_name, param_schema in properties.items():
                     param_type = param_schema.get("type", "any")
                     param_desc = param_schema.get("description", "")
@@ -312,47 +435,43 @@ class BrowserJudge(GreenAgent):
             task_description, website, tools
         )
 
-        error_feedback = None  # Track parse errors to provide feedback to white agent
+        error_feedback = None
 
         for step in range(max_steps):
             step_count = step + 1
-            logger.info(f"Starting step {step_count}/{max_steps}")
+            logger.info(f"[Task {task_idx}] Starting step {step_count}/{max_steps}")
 
             # Add delay between steps to avoid rate limiting (except first step)
             if step > 0:
-                delay = 2  # 2 second delay between steps
-                logger.info(
-                    f"Waiting {delay}s before next step to avoid rate limits..."
-                )
+                delay = 2
+                logger.info(f"[Task {task_idx}] Waiting {delay}s before next step...")
                 await asyncio.sleep(delay)
 
             await updater.update_status(
                 TaskState.working,
-                new_agent_text_message(f"Executing step {step_count}/{max_steps}"),
+                new_agent_text_message(
+                    f"[Task {task_idx}] Step {step_count}/{max_steps}"
+                ),
             )
 
             # Get current page accessibility snapshot via MCP
             snapshot = await browser_agent.get_snapshot()
 
-            # Truncate snapshot if too long (keep first 20000 chars)
+            # Truncate snapshot if too long
             snapshot_truncated = snapshot[:MAX_HTML_CONTEXT_LENGTH]
             if len(snapshot) > MAX_HTML_CONTEXT_LENGTH:
                 snapshot_truncated += "\n\n[Snapshot truncated for length...]"
 
-            # Prepare multi-part message (text + image)
+            # Prepare multi-part message
             parts = []
 
-            # 1. Add text part with snapshot and instructions
             if step == 0:
                 text_content = (
                     initial_prompt + f"\n\nCURRENT PAGE SNAPSHOT:\n{snapshot_truncated}"
                 )
             else:
-                # Build full tools section for subsequent steps (same as step 0)
-                # White agent needs complete tool info on every step to understand parameters
                 tools_section = build_tools_prompt(tools)
 
-                # Include error feedback if previous response had parse errors
                 if error_feedback:
                     text_content = f"""ERROR IN PREVIOUS RESPONSE:
 {error_feedback}
@@ -365,7 +484,7 @@ CURRENT PAGE SNAPSHOT:
 {snapshot_truncated}
 
 What should we do next?"""
-                    error_feedback = None  # Clear feedback after using it
+                    error_feedback = None
                 else:
                     text_content = f"""{tools_section}
 
@@ -376,12 +495,11 @@ What should we do next?"""
 
             parts.append(Part(root=TextPart(text=text_content)))
 
-            # Log the actual text being sent to white agent (first 3000 chars to show full tools section)
             logger.info(
-                f"Text content being sent (first 3000 chars):\n{text_content[:3000]}"
+                f"[Task {task_idx}] Text content being sent (first 300 chars):\n{text_content[:300]}"
             )
 
-            # 2. Add image part (screenshot)
+            # Add screenshot
             screenshot_data = browser_agent.get_latest_screenshot_base64()
             if screenshot_data:
                 base64_string, screenshot_path = screenshot_data
@@ -394,58 +512,43 @@ What should we do next?"""
                 )
                 parts.append(Part(root=file_part))
             else:
-                logger.warning("No screenshot available to attach")
+                logger.warning(f"[Task {task_idx}] No screenshot available")
 
-            # Log what we're sending to white agent
-            logger.info("=" * 60)
-            logger.info(f"STEP {step_count}/{max_steps}: Sending to white agent")
             logger.info("=" * 60)
             logger.info(
-                f"Message parts: {len(parts)} (text + {'image' if screenshot_data else 'no image'})"
+                f"[Task {task_idx}] STEP {step_count}/{max_steps}: Sending to white agent"
             )
-            logger.info(
-                f"Snapshot length: {len(snapshot)} chars (truncated to {len(snapshot_truncated)} chars for agent)"
-            )
-            if screenshot_data:
-                logger.info(f"Screenshot: {Path(screenshot_path).name}")
+            logger.info("=" * 60)
 
-            # Log first 500 chars of snapshot for debugging
-            logger.info(f"Snapshot preview (first 500 chars):\n{snapshot[:500]}")
-
-            # Save full snapshot to file for detailed debugging (optional via env var)
-            if os.getenv("SAVE_DEBUG_HTML", "false").lower() in (
-                "true",
-                "1",
-                "yes",
-            ):
+            # Save snapshot for debugging
+            if os.getenv("SAVE_DEBUG_HTML", "false").lower() in ("true", "1", "yes"):
                 debug_snapshot_path = (
                     f"{browser_agent.output_dir}/step_{step_count:03d}_snapshot.txt"
                 )
                 Path(debug_snapshot_path).write_text(snapshot)
-                logger.info(f"Saved full snapshot to: {debug_snapshot_path}")
 
-            # Send to white agent and get response
-            logger.info(f"Sending message to white agent at {white_agent_url}")
+            # Send to white agent
             try:
-                response_text = await self._tool_provider.talk_to_agent(
+                response_text = await tool_provider.talk_to_agent(
                     url=white_agent_url,
                     new_conversation=(step == 0),
                     parts=parts,
                 )
 
-                # Log full response (not truncated)
                 logger.info("=" * 60)
-                logger.info(f"STEP {step_count}/{max_steps}: Response from white agent")
+                logger.info(
+                    f"[Task {task_idx}] STEP {step_count}: Response from white agent"
+                )
                 logger.info("=" * 60)
                 logger.info(f"Full response:\n{response_text}")
                 logger.info("=" * 60)
 
             except Exception as e:
                 error_message = f"Failed to communicate with white agent: {str(e)}"
-                logger.error(error_message)
+                logger.error(f"[Task {task_idx}] {error_message}")
                 break
 
-            # Parse white agent's response
+            # Parse response
             try:
                 action = parse_white_agent_response(response_text)
                 thought = action.get("thought", "No thought provided")
@@ -454,13 +557,11 @@ What should we do next?"""
 
                 thoughts.append(f"Step {step_count}: {thought}")
 
-                # Log parsed action details
-                logger.info(f"Parsed action:")
+                logger.info(f"[Task {task_idx}] Parsed action:")
                 logger.info(f"  Thought: {thought}")
                 logger.info(f"  Tool: {tool}")
                 logger.info(f"  Params: {params}")
 
-                # Save response to file for debugging (optional via env var)
                 if os.getenv("SAVE_DEBUG_RESPONSES", "false").lower() in (
                     "true",
                     "1",
@@ -468,28 +569,26 @@ What should we do next?"""
                 ):
                     debug_response_path = f"{browser_agent.output_dir}/step_{step_count:03d}_response.json"
                     Path(debug_response_path).write_text(json.dumps(action, indent=2))
-                    logger.info(f"Saved response to: {debug_response_path}")
 
             except Exception as e:
                 error_message = f"Failed to parse white agent response: {str(e)}"
-                logger.error(error_message)
+                logger.error(f"[Task {task_idx}] {error_message}")
                 break
 
-            # Check if task is finished
+            # Check if finished
             if tool == "finish":
-                logger.info("White agent indicated task completion")
+                logger.info(f"[Task {task_idx}] Task completed")
                 success = True
                 break
 
-            # Check if there was a parsing error - provide feedback and retry
+            # Handle parsing error
             if tool == "error":
                 error_type = params.get("error_type", "unknown")
                 raw_response = params.get("raw_response", "")
                 logger.warning(
-                    f"White agent response parsing failed ({error_type}), will retry with feedback"
+                    f"[Task {task_idx}] Parse error ({error_type}), will retry"
                 )
 
-                # Set error feedback for next iteration
                 error_feedback = f"""Your previous response could not be parsed ({error_type}).
 
 Your response was:
@@ -501,48 +600,28 @@ Please ensure you:
 3. Include all three required fields: "thought", "tool", and "params"
 4. Use one of the valid tools: click, type, select, finish
 """
-                # Don't execute any action, just continue to next step with feedback
                 continue
 
-            # Execute action in browser
+            # Execute action
             try:
-                logger.info(f"Executing action: {tool} with params {params}")
+                logger.info(f"[Task {task_idx}] Executing: {tool} with params {params}")
                 result = await browser_agent.execute_action(tool, **params)
 
-                # Check if browser was closed
                 if result.get("browser_closed", False):
                     browser_closed = True
-                    logger.warning("=" * 60)
-                    logger.warning("⚠️ BROWSER CLOSE DETECTED")
-                    logger.warning("=" * 60)
-                    logger.warning(f"Tool: {tool}")
-                    logger.warning(
-                        f"Action recorded: {browser_agent.action_history[-1] if browser_agent.action_history else 'N/A'}"
-                    )
+                    logger.warning(f"[Task {task_idx}] Browser close detected")
 
-                    # If browser close happened after actions were taken, consider it success
-                    # (White agent explicitly closed browser, indicating task completion)
                     if len(browser_agent.action_history) > 0:
                         success = True
                         logger.warning(
-                            f"Setting success=True: browser closed after {len(browser_agent.action_history)} actions"
+                            f"[Task {task_idx}] Setting success=True after {len(browser_agent.action_history)} actions"
                         )
-                    else:
-                        logger.warning(
-                            "Browser closed with no actions - keeping success=False"
-                        )
-
-                    logger.warning("Terminating execution loop")
-                    logger.warning("=" * 60)
                     break
 
                 if not result.get("success", False):
-                    action_error = result.get(
-                        "error", "Unknown error during action execution"
-                    )
-                    logger.warning(f"Action execution failed: {action_error}")
+                    action_error = result.get("error", "Unknown error")
+                    logger.warning(f"[Task {task_idx}] Action failed: {action_error}")
 
-                    # Provide feedback to white agent about validation failure
                     error_feedback = f"""Your previous action failed with error:
 {action_error}
 
@@ -555,39 +634,23 @@ Most interactive tools require BOTH:
   - "ref": Snapshot reference (e.g., "s8")
 
 Try again with the correct parameters."""
-                    # Continue to next step with error feedback
                 else:
-                    logger.info("Action executed successfully")
+                    logger.info(f"[Task {task_idx}] Action executed successfully")
 
             except Exception as e:
                 error_message = f"Exception during action execution: {str(e)}"
-                logger.error(error_message)
-                # Check if exception is due to browser close
+                logger.error(f"[Task {task_idx}] {error_message}")
                 if "closed" in str(e).lower() or "disconnected" in str(e).lower():
                     browser_closed = True
-
-                    # If browser close happened after actions, consider it success
                     if len(browser_agent.action_history) > 0:
                         success = True
-                        logger.warning(
-                            f"Browser close detected via exception - setting success=True ({len(browser_agent.action_history)} actions)"
-                        )
-                    else:
-                        logger.warning(
-                            "Browser close detected via exception with no actions - keeping success=False"
-                        )
                     break
 
-        # If we completed all steps without finishing, it's a failure
         if step_count >= max_steps and not success:
-            logger.info(f"Reached max steps ({max_steps}) without completion")
+            logger.info(f"[Task {task_idx}] Reached max steps without completion")
 
-        # Log browser close termination
         if browser_closed:
-            logger.info(
-                f"Execution terminated at step {step_count} due to browser close"
-            )
-            logger.info("Task outcome will be determined by post-execution evaluation")
+            logger.info(f"[Task {task_idx}] Terminated due to browser close")
 
         return success, step_count, thoughts, error_message
 
@@ -600,9 +663,10 @@ Try again with the correct parameters."""
         thoughts: list[str],
         action_history: list[str],
         error_message: str | None,
+        task_idx: int = 0,
     ):
         logger.info("=" * 60)
-        logger.info("EVALUATION SUMMARY")
+        logger.info(f"[Task {task_idx}] EVALUATION SUMMARY")
         logger.info("=" * 60)
         logger.info(f"Task: {task_description}")
         logger.info(f"Success: {success}")
@@ -638,12 +702,22 @@ def browser_judge_agent_card(agent_name: str, card_url: str) -> AgentCard:
     "white_agent": "http://127.0.0.1:9019"
   },
   "config": {
-    "task_id": "20a460a8fe1971b84411c5b1e6ac4186",
-    "website": "https://www.stubhub.com/",
-    "task": "Show theatre events for Las Vegas and select one.",
-    "max_steps": 10,
-    "level": "easy"
-  }
+    "max_steps": 10
+  },
+  "tasks": [
+    {
+      "task_id": "task_1",
+      "website": "https://www.stubhub.com/",
+      "task": "Show theatre events for Las Vegas and select one.",
+      "level": "easy"
+    },
+    {
+      "task_id": "task_2",
+      "website": "https://www.example.com/",
+      "task": "Find contact information.",
+      "level": "easy"
+    }
+  ]
 }"""
         ],
     )

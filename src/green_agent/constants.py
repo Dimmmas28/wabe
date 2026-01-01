@@ -1,4 +1,7 @@
+import os
+
 MAX_HTML_CONTEXT_LENGTH = 20000
+MAX_PARALLEL_TASKS = int(os.getenv("MAX_PARALLEL_TASKS", "5"))
 
 TASK_RESULT_OUTPUT_DIR = ".output/results"
 TASK_RESULT_FILE_NAME = "result"

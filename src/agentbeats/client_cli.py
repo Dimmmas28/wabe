@@ -3,7 +3,7 @@ import json
 import sys
 import tomllib
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from a2a.types import (
     AgentCard,
@@ -11,7 +11,6 @@ from a2a.types import (
     Message,
     Part,
     TaskArtifactUpdateEvent,
-    TaskState,
     TaskStatusUpdateEvent,
     TextPart,
 )
@@ -20,7 +19,8 @@ from agentbeats.client import send_message
 from agentbeats.models import EvalRequest
 
 
-def parse_toml(d: dict[str, object]) -> tuple[EvalRequest, str]:
+def parse_toml(d: dict[str, Any]) -> tuple[EvalRequest, str]:
+    """Parse TOML and return single EvalRequest with tasks list and green endpoint."""
     green = d.get("green_agent")
     if not isinstance(green, dict) or "endpoint" not in green:
         raise ValueError("green.endpoint is required in TOML")
@@ -36,7 +36,11 @@ def parse_toml(d: dict[str, object]) -> tuple[EvalRequest, str]:
             if role and endpoint:
                 parts[role] = endpoint
 
-    eval_req = EvalRequest(participants=parts, config=d.get("config", {}) or {})
+    base_config: dict[str, Any] = d.get("config", {}) or {}
+    tasks: list[dict[str, Any]] = d.get("tasks", []) or []
+
+    # Create single EvalRequest with tasks list
+    eval_req = EvalRequest(participants=parts, config=base_config, tasks=tasks)
     return eval_req, green_endpoint
 
 
@@ -104,8 +108,13 @@ async def main():
 
     req, green_url = parse_toml(data)
 
+    task_count = len(req.tasks) if req.tasks else 1
+    print(f"Sending request with {task_count} task(s) to green agent...")
+
     msg = req.model_dump_json()
     await send_message(msg, green_url, streaming=True, consumer=event_consumer)
+
+    print("Evaluation completed.")
 
 
 if __name__ == "__main__":
