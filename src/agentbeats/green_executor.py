@@ -39,7 +39,9 @@ class GreenExecutor(AgentExecutor):
         event_queue: EventQueue,
     ) -> None:
         request_text = context.get_user_input()
-        print(f"DEBUG: Received request_text: {request_text[:2000] if request_text else 'None'}")
+        import sys
+        print(f"DEBUG green_executor: Received request_text: {request_text[:2000] if request_text else 'None'}", file=sys.stderr, flush=True)
+        print(f"DEBUG green_executor: Received request_text: {request_text[:2000] if request_text else 'None'}", flush=True)
         try:
             req: EvalRequest = EvalRequest.model_validate_json(request_text)
             ok, msg = self.agent.validate_request(req)

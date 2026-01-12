@@ -124,6 +124,11 @@ class BrowserJudge(GreenAgent):
         # Get tasks list (backward compatibility: if no tasks, use config as single task)
         tasks = request.tasks if request.tasks else [request.config]
 
+        import sys
+        print(f"DEBUG validate_request: request.tasks = {request.tasks}", file=sys.stderr, flush=True)
+        print(f"DEBUG validate_request: request.config = {request.config}", file=sys.stderr, flush=True)
+        print(f"DEBUG validate_request: tasks to validate = {tasks}", file=sys.stderr, flush=True)
+
         # Validate each task has required keys
         for i, task in enumerate(tasks):
             # Merge base config with task-specific config
