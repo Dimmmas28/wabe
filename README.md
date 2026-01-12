@@ -222,7 +222,7 @@ The repository includes a GitHub Actions workflow (`.github/workflows/docker-pub
 
 ## Architecture
 
-WABE follows the [AgentBeats](https://github.com/google/agentbeats) evaluation framework pattern:
+WABE follows the [AgentBeats](https://agentbeats.dev/) evaluation framework pattern:
 
 ### Components
 
