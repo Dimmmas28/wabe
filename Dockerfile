@@ -58,8 +58,8 @@ EXPOSE 9009 9019
 COPY docker-entrypoint.sh /app/
 RUN chmod +x /app/docker-entrypoint.sh
 
-# Use validation entrypoint
+# Use validation entrypoint that accepts AgentBeats arguments (--host, --port, --card-url)
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 
-# Default command runs the evaluation
-CMD ["uv", "run", "agentbeats-run", "scenarios/web_browser/scenario.toml"]
+# No default CMD - entrypoint handles default behavior
+# Usage: docker run -e GOOGLE_API_KEY=xxx image --host 0.0.0.0 --port 9009

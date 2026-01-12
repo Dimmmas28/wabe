@@ -11,5 +11,45 @@ fi
 # Create output directories if they don't exist
 mkdir -p .output .logs
 
-# Execute the command passed to docker run
-exec "$@"
+# Parse AgentBeats arguments (--host, --port, --card-url)
+HOST="127.0.0.1"
+PORT="9009"
+CARD_URL=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --host)
+            HOST="$2"
+            shift 2
+            ;;
+        --port)
+            PORT="$2"
+            shift 2
+            ;;
+        --card-url)
+            CARD_URL="$2"
+            shift 2
+            ;;
+        *)
+            # Pass remaining args to the command
+            break
+            ;;
+    esac
+done
+
+# Export for use by agents
+export AGENT_HOST="$HOST"
+export AGENT_PORT="$PORT"
+export AGENT_CARD_URL="$CARD_URL"
+
+echo "Starting agent on $HOST:$PORT"
+if [ -n "$CARD_URL" ]; then
+    echo "Agent card URL: $CARD_URL"
+fi
+
+# If no command provided, run the default scenario with parsed host/port
+if [ $# -eq 0 ]; then
+    exec uv run python scenarios/web_browser/browser_judge.py --host "$HOST" --port "$PORT"
+else
+    exec "$@"
+fi
