@@ -39,12 +39,14 @@ class GreenExecutor(AgentExecutor):
         event_queue: EventQueue,
     ) -> None:
         request_text = context.get_user_input()
+        print(f"DEBUG: Received request_text: {request_text[:2000] if request_text else 'None'}")
         try:
             req: EvalRequest = EvalRequest.model_validate_json(request_text)
             ok, msg = self.agent.validate_request(req)
             if not ok:
                 raise ServerError(error=InvalidParamsError(message=msg))
         except ValidationError as e:
+            print(f"DEBUG: Validation error: {e}")
             raise ServerError(error=InvalidParamsError(message=e.json()))
 
         msg = context.message
