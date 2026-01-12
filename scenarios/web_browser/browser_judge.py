@@ -121,13 +121,13 @@ class BrowserJudge(GreenAgent):
         if missing_roles:
             return False, f"Missing required participant roles: {missing_roles}"
 
-        # Get tasks list (backward compatibility: if no tasks, use config as single task)
-        tasks = request.tasks if request.tasks else [request.config]
-
-        import sys
-        print(f"DEBUG validate_request: request.tasks = {request.tasks}", file=sys.stderr, flush=True)
-        print(f"DEBUG validate_request: request.config = {request.config}", file=sys.stderr, flush=True)
-        print(f"DEBUG validate_request: tasks to validate = {tasks}", file=sys.stderr, flush=True)
+        # Get tasks list - check request.tasks, then config.tasks, then fallback to config as single task
+        if request.tasks:
+            tasks = request.tasks
+        elif "tasks" in request.config:
+            tasks = request.config["tasks"]
+        else:
+            tasks = [request.config]
 
         # Validate each task has required keys
         for i, task in enumerate(tasks):
@@ -150,8 +150,13 @@ class BrowserJudge(GreenAgent):
         """
         logger.info(f"Starting browser evaluation: {req}")
 
-        # Get tasks list (backward compatibility: if no tasks, use config as single task)
-        tasks_config = req.tasks if req.tasks else [req.config]
+        # Get tasks list - check request.tasks, then config.tasks, then fallback to config as single task
+        if req.tasks:
+            tasks_config = req.tasks
+        elif "tasks" in req.config:
+            tasks_config = req.config["tasks"]
+        else:
+            tasks_config = [req.config]
 
         # Merge base config with each task config
         merged_tasks = [{**req.config, **task} for task in tasks_config]
