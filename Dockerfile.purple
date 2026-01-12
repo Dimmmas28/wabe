@@ -1,0 +1,53 @@
+# Dockerfile.purple - Purple Agent (Web Browser Navigation Agent)
+# This image runs the white_agent.py as a purple/competitor agent on AgentBeats
+
+FROM mcr.microsoft.com/playwright/python:v1.55.0-noble
+
+WORKDIR /app
+
+# Install Node.js 22.x LTS via NodeSource repository
+RUN apt-get update && \
+    apt-get install -y ca-certificates curl gnupg && \
+    mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | \
+    gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" | \
+    tee /etc/apt/sources.list.d/nodesource.list && \
+    apt-get update && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install build dependencies for Python packages with native extensions
+RUN apt-get update && \
+    apt-get install -y build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install uv package manager
+RUN pip install --no-cache-dir uv
+
+# Copy dependency files and README (needed for package build)
+COPY pyproject.toml uv.lock README.md ./
+
+# Install Python dependencies using uv with frozen lock file
+RUN uv sync --frozen --python /usr/bin/python3
+
+# Copy project source code
+COPY src/ ./src/
+COPY scenarios/ ./scenarios/
+COPY .env.example ./.env.example
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV GOOGLE_GENAI_USE_VERTEXAI=FALSE
+
+# Expose port for purple agent (default 9019)
+EXPOSE 9019
+
+# Copy and set up entrypoint script
+COPY docker-entrypoint-purple.sh /app/
+RUN chmod +x /app/docker-entrypoint-purple.sh
+
+# Use validation entrypoint that accepts AgentBeats arguments (--host, --port, --card-url)
+ENTRYPOINT ["/app/docker-entrypoint-purple.sh"]
+
+# Usage: docker run -e GOOGLE_API_KEY=xxx image --host 0.0.0.0 --port 9019
