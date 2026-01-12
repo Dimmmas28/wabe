@@ -49,7 +49,11 @@ fi
 
 # If no command provided, run the default scenario with parsed host/port
 if [ $# -eq 0 ]; then
-    exec uv run python scenarios/web_browser/browser_judge.py --host "$HOST" --port "$PORT"
+    if [ -n "$CARD_URL" ]; then
+        exec uv run python scenarios/web_browser/browser_judge.py --host "$HOST" --port "$PORT" --card-url "$CARD_URL"
+    else
+        exec uv run python scenarios/web_browser/browser_judge.py --host "$HOST" --port "$PORT"
+    fi
 else
     exec "$@"
 fi
