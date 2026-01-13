@@ -139,6 +139,20 @@ After running, results are available in:
 | **Docker CLI** | `docker build -t wabe .` | Build manually |
 | | `docker run --rm --env-file .env wabe` | Run manually |
 
+### AgentBeats-Compliant Arguments
+
+The Docker image accepts AgentBeats-required arguments:
+
+```bash
+docker run --env-file .env ghcr.io/hjerpe/wabe:v1.0 --host 0.0.0.0 --port 9009
+```
+
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `--host` | Bind address | `127.0.0.1` |
+| `--port` | Listen port | `9009` |
+| `--card-url` | Advertised agent URL | (none) |
+
 ### Troubleshooting Docker
 
 **API key not working:**
@@ -161,9 +175,54 @@ docker stop <container_id>
 docker system prune -a
 ```
 
+## Publishing to AgentBeats
+
+WABE is ready to publish on [AgentBeats](https://agentbeats.dev/) - the platform for standardized AI agent evaluation.
+
+### Pre-built Image
+
+A pre-built Docker image is available on GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/hjerpe/wabe:v1.0
+```
+
+### Building for AgentBeats
+
+AgentBeats requires `linux/amd64` platform:
+
+```bash
+docker build --platform linux/amd64 -t ghcr.io/<username>/wabe:v1.0 .
+docker push ghcr.io/<username>/wabe:v1.0
+```
+
+### CI/CD with GitHub Actions
+
+The repository includes a GitHub Actions workflow (`.github/workflows/docker-publish.yml`) that automatically:
+
+- Builds on push to `main` branch or version tags (`v*`)
+- Targets `linux/amd64` platform
+- Pushes to GitHub Container Registry (`ghcr.io`)
+- Supports caching for faster builds
+
+**Triggering a build:**
+- Push to `main`: Builds and pushes `latest` tag
+- Push a version tag: `git tag v1.0.0 && git push origin v1.0.0`
+- Manual trigger: GitHub Actions → "Build and Push Docker Image" → "Run workflow"
+
+### Registering on AgentBeats
+
+1. Go to https://agentbeats.dev/
+2. Login and register your agent
+3. Provide Docker image reference: `ghcr.io/<username>/wabe:v1.0`
+4. Fill in metadata (name, description)
+5. Register a "battle" to test your agent
+
+**Note:** AgentBeats runs Docker images via GitHub Actions - no live hosting required.
+
 ## Architecture
 
-WABE follows the [AgentBeats](https://github.com/google/agentbeats) evaluation framework pattern:
+WABE follows the [AgentBeats](https://agentbeats.dev/) evaluation framework pattern:
 
 ### Components
 
@@ -514,6 +573,9 @@ Press Ctrl+C to stop.
 
 ```
 wabe/
+├── .github/
+│   └── workflows/
+│       └── docker-publish.yml # CI/CD for ghcr.io publishing
 ├── scenarios/
 │   └── web_browser/           # Browser automation scenario
 │       ├── scenario.toml      # AgentBeats configuration
@@ -529,6 +591,8 @@ wabe/
 │       └── prompts.py         # Dynamic tool prompt generation
 ├── data/
 │   └── tasks.json             # Task definitions
+├── Dockerfile                 # Multi-stage Docker build
+├── docker-entrypoint.sh       # AgentBeats-compliant entrypoint
 ├── .output/                   # Evaluation results (gitignored)
 ├── .logs/                     # Log files (gitignored)
 ├── .env                       # API keys (gitignored)

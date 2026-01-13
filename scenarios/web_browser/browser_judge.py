@@ -55,6 +55,9 @@ from green_agent.constants import (
     MAX_PARALLEL_TASKS,
     TASK_RESULT_OUTPUT_DIR,
 )
+
+# Default score threshold for evaluation (matches benchmark.py default)
+EVAL_SCORE_THRESHOLD = 3
 from green_agent.prompts import (
     BrowserJudgePrompts,
     build_tools_prompt,
@@ -121,8 +124,13 @@ class BrowserJudge(GreenAgent):
         if missing_roles:
             return False, f"Missing required participant roles: {missing_roles}"
 
-        # Get tasks list (backward compatibility: if no tasks, use config as single task)
-        tasks = request.tasks if request.tasks else [request.config]
+        # Get tasks list - check request.tasks, then config.tasks, then fallback to config as single task
+        if request.tasks:
+            tasks = request.tasks
+        elif "tasks" in request.config:
+            tasks = request.config["tasks"]
+        else:
+            tasks = [request.config]
 
         # Validate each task has required keys
         for i, task in enumerate(tasks):
@@ -145,8 +153,13 @@ class BrowserJudge(GreenAgent):
         """
         logger.info(f"Starting browser evaluation: {req}")
 
-        # Get tasks list (backward compatibility: if no tasks, use config as single task)
-        tasks_config = req.tasks if req.tasks else [req.config]
+        # Get tasks list - check request.tasks, then config.tasks, then fallback to config as single task
+        if req.tasks:
+            tasks_config = req.tasks
+        elif "tasks" in req.config:
+            tasks_config = req.config["tasks"]
+        else:
+            tasks_config = [req.config]
 
         # Merge base config with each task config
         merged_tasks = [{**req.config, **task} for task in tasks_config]
@@ -205,9 +218,44 @@ class BrowserJudge(GreenAgent):
         # Run benchmark evaluation once after all tasks complete
         success_rate = self._run_final_evaluation()
 
-        # Create aggregated result
-        successful_tasks = sum(1 for r in task_results if r.success)
+        # Parse LLM evaluation results to get per-task success
+        llm_predicted_labels = self._parse_eval_results()
+
+        # Create aggregated result using LLM evaluation for consistency
         total_tasks = len(task_results)
+
+        # Build task details with LLM-evaluated success
+        task_details = []
+        for r in task_results:
+            # Use LLM predicted_label if available, otherwise fall back to browser loop success
+            llm_success = llm_predicted_labels.get(r.task_id_with_timestamp)
+            if llm_success is not None:
+                task_success = bool(llm_success)
+            else:
+                # Fallback: if LLM didn't evaluate this task, use browser loop result
+                logger.warning(
+                    f"No LLM evaluation found for task {r.task_id_with_timestamp}, "
+                    f"using browser loop result: {r.success}"
+                )
+                task_success = r.success
+
+            task_details.append({
+                "task_id": r.task_id,
+                "task_id_with_timestamp": r.task_id_with_timestamp,
+                "website": r.website,
+                "task_description": r.task_description,
+                "level": r.level,
+                "success": task_success,
+                "steps_taken": r.step_count,
+                "max_steps": r.max_steps,
+                "thoughts": r.thoughts,
+                "action_history": r.action_history,
+                "screenshots": r.screenshots,
+                "error": r.error_message,
+            })
+
+        # Calculate successful_tasks from LLM-evaluated success for consistency
+        successful_tasks = sum(1 for t in task_details if t["success"])
 
         aggregated_result = EvalResult(
             winner="white_agent" if successful_tasks > 0 else "none",
@@ -215,23 +263,7 @@ class BrowserJudge(GreenAgent):
                 "success_rate": success_rate,
                 "successful_tasks": successful_tasks,
                 "total_tasks": total_tasks,
-                "tasks": [
-                    {
-                        "task_id": r.task_id,
-                        "task_id_with_timestamp": r.task_id_with_timestamp,
-                        "website": r.website,
-                        "task_description": r.task_description,
-                        "level": r.level,
-                        "success": r.success,
-                        "steps_taken": r.step_count,
-                        "max_steps": r.max_steps,
-                        "thoughts": r.thoughts,
-                        "action_history": r.action_history,
-                        "screenshots": r.screenshots,
-                        "error": r.error_message,
-                    }
-                    for r in task_results
-                ],
+                "tasks": task_details,
             },
         )
 
@@ -272,6 +304,43 @@ class BrowserJudge(GreenAgent):
             )
         )
         return success_rate
+
+    def _parse_eval_results(self) -> dict[str, int]:
+        """
+        Parse LLM evaluation results from the JSONL file.
+
+        Returns:
+            Dictionary mapping task_id_with_timestamp to predicted_label (0 or 1)
+        """
+        eval_file = Path(EVAL_RESULT_OUTPUT_DIR) / (
+            f"{EVAL_MODE}_{EVAL_MODEL}_score_threshold_{EVAL_SCORE_THRESHOLD}_auto_eval_results.json"
+        )
+
+        predicted_labels: dict[str, int] = {}
+
+        if not eval_file.exists():
+            logger.warning(f"Evaluation results file not found: {eval_file}")
+            return predicted_labels
+
+        try:
+            with open(eval_file, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        result = json.loads(line)
+                        task_id = result.get("task_id", "")
+                        label = result.get("predicted_label", 0)
+                        predicted_labels[task_id] = label
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse eval result line: {e}")
+                        continue
+        except Exception as e:
+            logger.error(f"Failed to read evaluation results: {e}")
+
+        logger.info(f"Parsed {len(predicted_labels)} LLM evaluation results")
+        return predicted_labels
 
     async def _run_single_task(
         self,
