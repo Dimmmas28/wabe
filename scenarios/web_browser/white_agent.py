@@ -17,6 +17,7 @@ load_dotenv()
 from a2a.types import AgentCapabilities, AgentCard
 from google.adk.a2a.utils.agent_to_a2a import to_a2a
 from google.adk.agents import Agent
+from google.genai import types
 
 
 def browser_agent_card(host: str, port: int, card_url: str = None) -> AgentCard:
@@ -58,6 +59,9 @@ def main():
 Your task is to help complete web navigation and interaction tasks.
 
 Analyze the information provided and choose the appropriate action to progress toward completing the task.""",
+        generate_content_config=types.GenerateContentConfig(
+            temperature=0.0,
+        ),
     )
 
     # Create agent card
