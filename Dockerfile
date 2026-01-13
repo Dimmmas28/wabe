@@ -61,5 +61,6 @@ RUN chmod +x /app/docker-entrypoint.sh
 # Use validation entrypoint
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 
-# Default command runs the evaluation
+# Default command runs the evaluation with default scenario
+# Override at runtime: docker run ... wabe:latest uv run agentbeats-run <custom-scenario.toml>
 CMD ["uv", "run", "agentbeats-run", "scenarios/web_browser/scenario.toml"]
