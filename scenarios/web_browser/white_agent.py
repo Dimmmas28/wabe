@@ -61,6 +61,9 @@ Your task is to help complete web navigation and interaction tasks.
 Analyze the information provided and choose the appropriate action to progress toward completing the task.""",
         generate_content_config=types.GenerateContentConfig(
             temperature=0.0,
+            top_p=0.0,
+            top_k=1,
+            seed=42,
         ),
     )
 
