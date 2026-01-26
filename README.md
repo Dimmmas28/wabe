@@ -73,19 +73,28 @@ The script will automatically:
 
 **Options:**
 ```bash
-python run-docker.py --build         # Force rebuild image
-python run-docker.py --show-logs     # Show live logs
-python run-docker.py --build-only    # Just build, don't run
-python run-docker.py --help          # See all options
+python run-docker.py --build                              # Force rebuild image
+python run-docker.py --show-logs                          # Show live logs
+python run-docker.py --scenario scenarios/custom.toml     # Use custom scenario file
+python run-docker.py --level easy                         # Run only easy tasks
+python run-docker.py --limit 5                            # Run first 5 tasks only
+python run-docker.py --level hard --limit 3               # Run first 3 hard tasks
+python run-docker.py --build-only                         # Just build, don't run
+python run-docker.py --help                               # See all options
 ```
 
 **Using Makefile (alternative):**
 
 ```bash
-make docker-build    # Build the image
-make docker-run      # Run evaluation
-make docker-logs     # Run with live logs
-make help           # Show all commands
+make docker-build                                               # Build the image
+make docker-run                                                 # Run evaluation
+make docker-run SCENARIO=scenarios/web_browser/scenario_full.toml  # Use custom scenario
+make docker-run LEVEL=easy                                      # Run only easy tasks
+make docker-run LIMIT=5                                         # Run first 5 tasks
+make docker-run LEVEL=hard LIMIT=3                              # Run first 3 hard tasks
+make docker-logs                                                # Run with live logs
+make docker-logs SCENARIO=scenarios/custom.toml LEVEL=medium    # Custom scenario with medium tasks
+make help                                                       # Show all commands
 ```
 
 ### Manual Docker Commands
@@ -120,6 +129,44 @@ docker run --rm \
   uv run agentbeats-run scenarios/web_browser/scenario.toml --show-logs
 ```
 
+**Run with custom scenario file:**
+```bash
+docker run --rm \
+  --env-file .env \
+  -v $(pwd)/.output:/app/.output \
+  -v $(pwd)/.logs:/app/.logs \
+  wabe:latest \
+  uv run agentbeats-run scenarios/web_browser/scenario_full.toml
+```
+
+**Run with task filtering:**
+```bash
+# Run only easy tasks
+docker run --rm \
+  --env-file .env \
+  -e TASK_LEVEL=easy \
+  -v $(pwd)/.output:/app/.output \
+  -v $(pwd)/.logs:/app/.logs \
+  wabe:latest
+
+# Run first 5 tasks
+docker run --rm \
+  --env-file .env \
+  -e TASK_LIMIT=5 \
+  -v $(pwd)/.output:/app/.output \
+  -v $(pwd)/.logs:/app/.logs \
+  wabe:latest
+
+# Run first 3 hard tasks
+docker run --rm \
+  --env-file .env \
+  -e TASK_LEVEL=hard \
+  -e TASK_LIMIT=3 \
+  -v $(pwd)/.output:/app/.output \
+  -v $(pwd)/.logs:/app/.logs \
+  wabe:latest
+```
+
 ### Output Files
 
 After running, results are available in:
@@ -132,12 +179,21 @@ After running, results are available in:
 |--------|---------|-------------|
 | **Python Script** | `python run-docker.py` | Build and run (recommended) |
 | | `python run-docker.py --show-logs` | Run with live logs |
+| | `python run-docker.py --scenario <path>` | Run custom scenario file |
+| | `python run-docker.py --level <easy\|medium\|hard>` | Filter tasks by difficulty |
+| | `python run-docker.py --limit <N>` | Run first N tasks |
 | | `python run-docker.py --build` | Force rebuild |
 | **Makefile** | `make docker-run` | Run evaluation |
+| | `make docker-run SCENARIO=<path>` | Run custom scenario |
+| | `make docker-run LEVEL=<easy\|medium\|hard>` | Filter tasks by difficulty |
+| | `make docker-run LIMIT=<N>` | Run first N tasks |
 | | `make docker-logs` | Run with live logs |
+| | `make docker-logs SCENARIO=<path>` | Run custom scenario with logs |
 | | `make docker-build` | Build image only |
 | **Docker CLI** | `docker build -t wabe .` | Build manually |
 | | `docker run --rm --env-file .env wabe` | Run manually |
+| | `docker run -e TASK_LEVEL=<level> ... wabe` | Filter by difficulty |
+| | `docker run -e TASK_LIMIT=<N> ... wabe` | Limit number of tasks |
 
 ### AgentBeats-Compliant Arguments
 
@@ -685,3 +741,8 @@ Or format code first, then run checks:
 ## Contributing
 
 [Add contribution guidelines]
+
+
+1.Run white agent 
+2.Run green agent 
+3.Send message with task details to green agent, and agent will evaluate the white agent. This logic is inside client_cli it reads task from scenario.toml

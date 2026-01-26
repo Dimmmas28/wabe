@@ -103,11 +103,18 @@ class BrowserJudge(GreenAgent):
     3. Returns aggregated evaluation results
     """
 
-    def __init__(self):
-        """Initialize the Browser Judge agent."""
+    def __init__(self, limit: int | None = None, level: str | None = None):
+        """Initialize the Browser Judge agent.
+
+        Args:
+            limit: Maximum number of tasks to run (None = all tasks)
+            level: Filter tasks by difficulty level ("easy", "medium", "hard", or None for all)
+        """
         self._required_roles = ["white_agent"]
         self._required_task_keys = ["task_id", "website", "task"]
-        logger.info("BrowserJudge initialized")
+        self._limit = limit
+        self._level = level
+        logger.info(f"BrowserJudge initialized (limit={limit}, level={level})")
 
     def validate_request(self, request: EvalRequest) -> tuple[bool, str]:
         """
@@ -163,6 +170,23 @@ class BrowserJudge(GreenAgent):
 
         # Merge base config with each task config
         merged_tasks = [{**req.config, **task} for task in tasks_config]
+
+        # Apply filtering based on level and limit
+        if self._level:
+            original_count = len(merged_tasks)
+            merged_tasks = [
+                task for task in merged_tasks if task.get("level") == self._level
+            ]
+            logger.info(
+                f"Filtered tasks by level '{self._level}': {original_count} -> {len(merged_tasks)} task(s)"
+            )
+
+        if self._limit and self._limit > 0:
+            original_count = len(merged_tasks)
+            merged_tasks = merged_tasks[: self._limit]
+            logger.info(
+                f"Limited tasks to {self._limit}: {original_count} -> {len(merged_tasks)} task(s)"
+            )
 
         await updater.update_status(
             TaskState.working,
@@ -830,6 +854,19 @@ async def main():
         action="store_true",
         help="Use Cloudflare Quick Tunnel for external access",
     )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=os.environ.get("TASK_LIMIT"),
+        help="Maximum number of tasks to run (default: all tasks, can set via TASK_LIMIT env var)",
+    )
+    parser.add_argument(
+        "--level",
+        type=str,
+        choices=["easy", "medium", "hard"],
+        default=os.environ.get("TASK_LEVEL"),
+        help="Filter tasks by difficulty level (easy, medium, or hard, can set via TASK_LEVEL env var)",
+    )
     args = parser.parse_args()
 
     # Setup agent URL (with optional cloudflare tunnel)
@@ -843,8 +880,8 @@ async def main():
         )
 
     async with agent_url_cm as agent_url:
-        # Create agent and executor
-        agent = BrowserJudge()
+        # Create agent and executor with filtering parameters
+        agent = BrowserJudge(limit=args.limit, level=args.level)
         executor = GreenExecutor(agent)
         agent_card = browser_judge_agent_card("BrowserJudge", agent_url)
 

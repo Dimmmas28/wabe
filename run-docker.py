@@ -72,7 +72,14 @@ def build_image(tag: str, force: bool = False):
         sys.exit(1)
 
 
-def run_container(tag: str, show_logs: bool = False, env_file: str = ".env"):
+def run_container(
+    tag: str,
+    show_logs: bool = False,
+    env_file: str = ".env",
+    scenario: str = "scenarios/web_browser/scenario.toml",
+    limit: int | None = None,
+    level: str | None = None,
+):
     """Run the Docker container."""
     # Prepare volume mounts
     cwd = Path.cwd()
@@ -103,6 +110,12 @@ def run_container(tag: str, show_logs: bool = False, env_file: str = ".env"):
         print("   export GOOGLE_API_KEY=your_key")
         sys.exit(1)
 
+    # Add task filtering environment variables
+    if limit is not None:
+        cmd.extend(["-e", f"TASK_LIMIT={limit}"])
+    if level is not None:
+        cmd.extend(["-e", f"TASK_LEVEL={level}"])
+
     # Add volume mounts
     cmd.extend(
         [
@@ -122,10 +135,13 @@ def run_container(tag: str, show_logs: bool = False, env_file: str = ".env"):
                 "uv",
                 "run",
                 "agentbeats-run",
-                "scenarios/web_browser/scenario.toml",
+                scenario,
                 "--show-logs",
             ]
         )
+    else:
+        # Override default CMD with scenario argument
+        cmd.extend(["uv", "run", "agentbeats-run", scenario])
 
     print(f"🚀 Running WABE evaluation...")
     if show_logs:
@@ -161,11 +177,23 @@ Examples:
   # Force rebuild and run with live logs
   python run-docker.py --build --show-logs
 
+  # Run with custom scenario file
+  python run-docker.py --scenario scenarios/web_browser/scenario_full.toml
+
+  # Run only easy tasks
+  python run-docker.py --level easy
+
+  # Run first 5 tasks only
+  python run-docker.py --limit 5
+
+  # Run first 3 hard tasks
+  python run-docker.py --level hard --limit 3
+
   # Just build the image
   python run-docker.py --build-only
 
-  # Run with custom env file
-  python run-docker.py --env-file .env.production
+  # Run with custom env file and scenario
+  python run-docker.py --env-file .env.production --scenario scenarios/custom/scenario.toml
         """,
     )
 
@@ -194,6 +222,22 @@ Examples:
         default=".env",
         help="Path to environment file (default: .env)",
     )
+    parser.add_argument(
+        "--scenario",
+        default="scenarios/web_browser/scenario.toml",
+        help="Path to scenario file (default: scenarios/web_browser/scenario.toml)",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        help="Maximum number of tasks to run (default: all tasks)",
+    )
+    parser.add_argument(
+        "--level",
+        type=str,
+        choices=["easy", "medium", "hard"],
+        help="Filter tasks by difficulty level (easy, medium, or hard)",
+    )
 
     args = parser.parse_args()
 
@@ -217,7 +261,9 @@ Examples:
             print("   export GOOGLE_API_KEY=your_key_here")
             sys.exit(1)
 
-        run_container(args.tag, args.show_logs, args.env_file)
+        run_container(
+            args.tag, args.show_logs, args.env_file, args.scenario, args.limit, args.level
+        )
 
 
 if __name__ == "__main__":
