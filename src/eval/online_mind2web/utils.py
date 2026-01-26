@@ -123,6 +123,8 @@ class OpenaiEngine:
         llm = self.client(
             model="gemini-2.5-flash",
             temperature=temperature,
+            top_p=0.0,
+            top_k=1,
             max_tokens=max_new_tokens,
             **kwargs,
         )

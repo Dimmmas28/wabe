@@ -1,7 +1,8 @@
-# Use Playwright base image with pre-installed browsers (Ubuntu 24.04 with Python 3.12)
+# Dockerfile.purple - Purple Agent (Web Browser Navigation Agent)
+# This image runs the white_agent.py as a purple/competitor agent on AgentBeats
+
 FROM mcr.microsoft.com/playwright/python:v1.55.0-noble
 
-# Set working directory
 WORKDIR /app
 
 # Install Node.js 22.x LTS via NodeSource repository
@@ -16,12 +17,6 @@ RUN apt-get update && \
     apt-get install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Chromium browser and system dependencies for Playwright MCP server
-# Note: Due to a known issue in @playwright/mcp v0.0.33+ (GitHub Issue #914),
-# the browser may not be detected initially. The agent will automatically install
-# it at runtime using the MCP server's browser_install tool.
-RUN npx -y playwright install chromium --with-deps
-
 # Install build dependencies for Python packages with native extensions
 RUN apt-get update && \
     apt-get install -y build-essential && \
@@ -34,32 +29,25 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock README.md ./
 
 # Install Python dependencies using uv with frozen lock file
-# Explicitly specify system Python path
 RUN uv sync --frozen --python /usr/bin/python3
 
 # Copy project source code
 COPY src/ ./src/
 COPY scenarios/ ./scenarios/
-COPY data/ ./data/
 COPY .env.example ./.env.example
 
-# Create output directories
-RUN mkdir -p .output .logs
-
-# Set environment variables for non-interactive mode
+# Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV GOOGLE_GENAI_USE_VERTEXAI=FALSE
-ENV HEADLESS=true
 
-# Expose ports for both agents
-EXPOSE 9009 9019
+# Expose port for purple agent (default 9019)
+EXPOSE 9019
 
 # Copy and set up entrypoint script
-COPY docker-entrypoint.sh /app/
-RUN chmod +x /app/docker-entrypoint.sh
+COPY docker-entrypoint-purple.sh /app/
+RUN chmod +x /app/docker-entrypoint-purple.sh
 
 # Use validation entrypoint that accepts AgentBeats arguments (--host, --port, --card-url)
-ENTRYPOINT ["/app/docker-entrypoint.sh"]
+ENTRYPOINT ["/app/docker-entrypoint-purple.sh"]
 
-# No default CMD - entrypoint handles default behavior
-# Usage: docker run -e GOOGLE_API_KEY=xxx image --host 0.0.0.0 --port 9009
+# Usage: docker run -e GOOGLE_API_KEY=xxx image --host 0.0.0.0 --port 9019
