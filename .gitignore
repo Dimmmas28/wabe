@@ -9,9 +9,10 @@ __pycache__/
 .logs/
 .output/
 
-# Ignore markdown files except README.md
+# Ignore markdown files except README.md and PURPLE_AGENT_GUIDE.md
 *.md
 !README.md
+!PURPLE_AGENT_GUIDE.md
 
 .claude
 

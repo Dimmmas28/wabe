@@ -110,7 +110,7 @@ To submit your agent to the leaderboard:
 2. Build your purple agent as a Docker image
 3. Register on [agentbeats.dev](https://agentbeats.dev)
 
-See [AGENT_INTEGRATION_SPEC.md](AGENT_INTEGRATION_SPEC.md) for detailed requirements.
+See [PURPLE_AGENT_GUIDE.md](PURPLE_AGENT_GUIDE.md) for detailed requirements.
 
 ### Pre-built Images
 
