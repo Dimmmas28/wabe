@@ -392,6 +392,7 @@ class BrowserJudge(GreenAgent):
         website = task_config["website"]
         task_description = task_config["task"]
         max_steps = int(task_config.get("max_steps", 10))
+        step_delay = float(task_config.get("step_delay", 2.0))
         level = task_config.get("level", "unknown")
 
         # Generate timestamp for unique directory
@@ -422,6 +423,7 @@ class BrowserJudge(GreenAgent):
 
             success, step_count, thoughts, error_message = await self._run_task_loop(
                 max_steps=max_steps,
+                step_delay=step_delay,
                 browser_agent=browser_agent,
                 tool_provider=tool_provider,
                 updater=updater,
@@ -478,6 +480,7 @@ class BrowserJudge(GreenAgent):
     async def _run_task_loop(
         self,
         max_steps: int,
+        step_delay: float,
         browser_agent: BrowserAgent,
         tool_provider: ToolProvider,
         updater: TaskUpdater,
@@ -537,10 +540,11 @@ class BrowserJudge(GreenAgent):
             logger.info(f"[Task {task_idx}] Starting step {step_count}/{max_steps}")
 
             # Add delay between steps to avoid rate limiting (except first step)
-            if step > 0:
-                delay = 2
-                logger.info(f"[Task {task_idx}] Waiting {delay}s before next step...")
-                await asyncio.sleep(delay)
+            if step > 0 and step_delay > 0:
+                logger.info(
+                    f"[Task {task_idx}] Waiting {step_delay}s before next step..."
+                )
+                await asyncio.sleep(step_delay)
 
             await updater.update_status(
                 TaskState.working,

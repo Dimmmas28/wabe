@@ -1,0 +1,129 @@
+[green_agent]
+endpoint = "http://127.0.0.1:9009"
+cmd = "uv run python scenarios/web_browser/browser_judge.py --host 127.0.0.1 --port 9009"
+
+[[participants]]
+role = "white_agent"
+endpoint = "http://127.0.0.1:9019"
+cmd = "uv run python -m scenarios.web_browser.agents.react_adk --host 127.0.0.1 --port 9019"
+
+[config]
+max_steps = 30
+step_delay = 3.0 
+
+[[tasks]]
+task_id = "20a460a8fe1971b84411c5b1e6ac4186"
+website = "https://www.stubhub.com/"
+task = "Show theatre events for Las Vegas and select one."
+level = "easy"
+
+[[tasks]]
+task_id = "561693d6eec7bbfba3fefe9e4b26decb"
+website = "https://www.marriott.com/"
+task = "Browse Marriott Bonvoy credit cards on Marriott."
+level = "easy"
+
+[[tasks]]
+task_id = "b6d10e9bd19b4009a02dea0e98f4e1ae"
+website = "https://www.foxsports.com/"
+task = "Check the current standings for MLS on Fox Sports."
+level = "easy"
+
+[[tasks]]
+task_id = "d7c955b47af68e01766fa86d0bee08a7"
+task = "Add Elevate at Chicago, IL, to favorites and show a virtual tour."
+website = "https://www.apartments.com/"
+reference_length = 4
+level = "easy"
+
+[[tasks]]
+task_id = "a172a5d9ffaf5ef02bd550ec4fe24e6d"
+task = "Browse the natural products database."
+website = "https://www.drugs.com/"
+reference_length = 2
+level = "easy"
+
+[[tasks]]
+task_id = "4c572a627b53b0f9a734ab37f21819b8"
+task = "Browse apartments with at least 2 bedrooms and 2 bathrooms and a max price of $4000 per month."
+website = "https://craigslist.org/"
+reference_length = 5
+level = "easy"
+
+[[tasks]]
+task_id = "34992feb69eb8e788faa06868b365c49"
+task = "Submit a request for vehicle registration renewal with title number X123456 and last 4 digits of VIN is 1234."
+website = "https://www.dmv.virginia.gov/"
+reference_length = 5
+level = "easy"
+
+[[tasks]]
+task_id = "a6f0434ce6aff5f9b03681241b03ad82"
+task = "Find the closing stock price for Tesla on March 17, 2023."
+website = "https://finance.yahoo.com/"
+reference_length = 3
+level = "easy"
+
+[[tasks]]
+task_id = "828c2d98616a9478d5864d847d5a1b28"
+task = "Browse the list of Civil Division forms."
+website = "https://www.justice.gov/"
+reference_length = 4
+level = "easy"
+
+[[tasks]]
+task_id = "bbbc243b4f18a7a897f0bc84e11d293f"
+task = "Find out how many assists Chris Paul has been averaging in the current season."
+website = "https://www.nba.com/"
+reference_length = 4
+level = "easy"
+
+[[tasks]]
+task_id = "bf3b311cc8dce16d3de844f4b5875dfd"
+task = "Compare Apple watches and  learn more about the ultra version on apple."
+website = "https://www.apple.com/"
+reference_length = 4
+level = "easy"
+
+[[tasks]]
+task_id = "7abdceee212151f187ee1a1744c57606"
+task = "Can you show me the page with the filing fee for a self-petitioned I-140 application?"
+website = "https://www.uscis.gov/"
+reference_length = 6
+level = "medium"
+
+[[tasks]]
+task_id = "7fff82864f21ddeccf4104a220892824"
+task = """
+Find the lowest 27\"-32\" Samsung or LG computer monitors nearby which have 4k, IPS display."""
+website = "https://www.google.com/shopping?udm=28"
+reference_length = 10
+level = "medium"
+
+[[tasks]]
+task_id = "78baf9dbe7c3532f7d7ef4cc22a7f065_121125"
+task = "Find the newest digital trends report in the Finance & Insurance industry within the region of China."
+website = "https://www.statista.com/"
+reference_length = 8
+level = "medium"
+
+[[tasks]]
+task_id = "636b07af4dd97c1793733db1fd1b90b8_110325"
+task = "Filter handbags to show evening bags that are gold, made of satin, and priced under $100."
+website = "https://www.jcpenney.com/"
+reference_length = 13
+level = "hard"
+
+[[tasks]]
+task_id = "b3f8bd9198d9d157e0848109563c4b23"
+task = "Find a permanent job in Logistics within 20 miles of New York, zip 11005, in the middle-income range for a high school diploma holder."
+website = "https://ohiomeansjobs.ohio.gov/"
+reference_length = 15
+level = "hard"
+
+[[tasks]]
+task_id = "b64f938af842f6a1b4489d0e49a785a7_121125"
+task = "Get the frozen vegetarian cheese pizza between 5 to 10 USD on Target."
+website = "https://www.target.com/"
+reference_length = 17
+level = "hard"

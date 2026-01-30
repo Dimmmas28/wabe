@@ -9,6 +9,7 @@ cmd = "uv run python -m scenarios.web_browser.agents.adk_default --host 127.0.0.
 
 [config]
 max_steps = 10
+step_delay = 2.0  # Seconds to wait between steps (rate limit mitigation)
 
 [[tasks]]
 task_id = "20a460a8fe1971b84411c5b1e6ac4186"

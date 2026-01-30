@@ -16,7 +16,11 @@ from google.adk.a2a.utils.agent_to_a2a import to_a2a
 from google.adk.agents import Agent
 from google.genai import types
 
-from scenarios.web_browser.agents import create_agent_card, create_base_arg_parser
+from scenarios.web_browser.agents import (
+    RetryGemini,
+    create_agent_card,
+    create_base_arg_parser,
+)
 
 
 def main():
@@ -26,15 +30,31 @@ def main():
     )
     args = parser.parse_args()
 
+    # Create model with retry wrapper for rate limit handling
+    model = RetryGemini(
+        model="gemini-2.5-flash",
+        max_retries=5,
+        base_delay=2.0,
+        max_delay=60.0,
+    )
+
     # Create the browser navigation agent
     root_agent = Agent(
         name="browser_agent",
-        model="gemini-2.5-flash",
+        model=model,
         description="A web browser navigation agent that helps complete web tasks.",
         instruction="""You are a helpful web automation agent.
 Your task is to help complete web navigation and interaction tasks.
 
-Analyze the information provided and choose the appropriate action to progress toward completing the task.""",
+Analyze the information provided and choose the appropriate action to progress toward completing the task.
+
+IMPORTANT: If you encounter blockers that cannot be bypassed, call "browser_close":
+- CAPTCHA/reCAPTCHA challenges (cannot solve programmatically)
+- Login walls that keep reappearing after closing
+- Access denied (403) or authentication required
+- Stuck in a loop (3+ similar actions without progress)
+
+Do not navigate to other websites to work around login walls.""",
         generate_content_config=types.GenerateContentConfig(
             temperature=0.0,
             top_p=0.0,

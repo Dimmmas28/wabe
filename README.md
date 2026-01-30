@@ -128,6 +128,9 @@ docker pull ghcr.io/hjerpe/wabe-purple-reliability:latest
 ### Building Purple Agent Images
 
 ```bash
+# List available agents
+./scripts/build-purple-images.sh --list
+
 # Build all agents
 ./scripts/build-purple-images.sh
 
@@ -137,6 +140,8 @@ docker pull ghcr.io/hjerpe/wabe-purple-reliability:latest
 # Build and push to registry
 ./scripts/build-purple-images.sh --push
 ```
+
+Any `.py` file in `scenarios/web_browser/agents/` is automatically discoverable and buildable.
 
 ## Architecture
 
@@ -281,6 +286,36 @@ wabe/
 ├── scripts/                   # Development scripts
 ├── Dockerfile                 # Green agent image
 └── Dockerfile.purple          # Purple agent image
+```
+
+## Sample Tasks
+
+Sample random tasks by difficulty level (outputs TOML format for easy copying):
+
+```bash
+# 3 random tasks per level (easy, medium, hard)
+uv run python scripts/sample_tasks.py
+
+# Reproducible sampling with seed
+uv run python scripts/sample_tasks.py --seed 42
+
+# 5 tasks per level
+uv run python scripts/sample_tasks.py --count 5
+```
+
+## Validate Scenario Files
+
+Check scenario TOML files for duplicate tasks, missing fields, and view statistics:
+
+```bash
+# Validate a single file
+uv run python scripts/validate_scenario.py scenarios/web_browser/scenario.toml
+
+# Validate all scenario files
+uv run python scripts/validate_scenario.py scenarios/web_browser/*.toml
+
+# Verbose mode (show statistics)
+uv run python scripts/validate_scenario.py -v scenarios/web_browser/scenario_full.toml
 ```
 
 ## Development

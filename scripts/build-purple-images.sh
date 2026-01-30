@@ -18,11 +18,13 @@ Arguments:
                 If omitted, builds all agents in scenarios/web_browser/agents/
 
 Options:
+  -l, --list    List available agents
   --push        Push images to registry after building
   --registry    Registry prefix (default: ghcr.io/hjerpe)
   -h, --help    Show this help message
 
 Examples:
+  ./scripts/build-purple-images.sh --list             # List available agents
   ./scripts/build-purple-images.sh                    # Build all agents
   ./scripts/build-purple-images.sh reliability        # Build reliability agent
   ./scripts/build-purple-images.sh --push             # Build all and push
@@ -36,6 +38,16 @@ Images produced:
 Note: You must be logged into Docker registry before using --push:
   docker login ghcr.io
 EOF
+}
+
+# Function to list available agents
+list_agents() {
+    for f in ${AGENTS_DIR}/*.py; do
+        basename="${f##*/}"
+        if [ "$basename" != "__init__.py" ]; then
+            echo "${basename%.py}"
+        fi
+    done
 }
 
 # Parse arguments
@@ -57,6 +69,11 @@ while [[ $# -gt 0 ]]; do
             show_usage
             exit 0
             ;;
+        -l|--list)
+            echo "Available agents:"
+            list_agents | sed 's/^/  - /'
+            exit 0
+            ;;
         *)
             if [ -z "$AGENT" ]; then
                 AGENT="$1"
@@ -65,16 +82,6 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
-
-# Function to list available agents
-list_agents() {
-    for f in ${AGENTS_DIR}/*.py; do
-        basename="${f##*/}"
-        if [ "$basename" != "__init__.py" ]; then
-            echo "${basename%.py}"
-        fi
-    done
-}
 
 # Function to build single agent
 build_agent() {

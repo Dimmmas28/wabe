@@ -303,14 +303,18 @@ class BrowserAgent:
                 )
                 return None
 
-            # Decode base64 and save to trajectory folder
+            # Decode base64 and convert to JPEG for smaller file size
             screenshot_dir = self.output_dir / TASK_RESULT_SCREENSHOTS_FOLDER
             screenshot_dir.mkdir(parents=True, exist_ok=True)
-            screenshot_path = screenshot_dir / f"{name}.png"
+            screenshot_path = screenshot_dir / f"{name}.jpg"
 
+            # Convert PNG to JPEG for smaller file size
             image_bytes = base64.b64decode(image_data)
-            with open(screenshot_path, "wb") as f:
-                f.write(image_bytes)
+            img = Image.open(io.BytesIO(image_bytes))
+            # Convert to RGB if necessary (PNG may have alpha channel)
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+            img.save(screenshot_path, format="JPEG", quality=85, optimize=True)
 
             # Track in screenshots list
             path_str = str(screenshot_path)

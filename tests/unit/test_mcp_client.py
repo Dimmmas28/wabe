@@ -52,7 +52,8 @@ class TestMCPBrowserClientLifecycle:
                 # Verify subprocess was called with correct command
                 subprocess.Popen.assert_called_once()
                 call_args = subprocess.Popen.call_args[0][0]
-                assert call_args == [
+                # Check base command arguments
+                assert call_args[:7] == [
                     "npx",
                     "-y",
                     "@playwright/mcp",
@@ -61,6 +62,9 @@ class TestMCPBrowserClientLifecycle:
                     "--headless",
                     "--no-sandbox",
                 ]
+                # Check that --user-data-dir is included for browser isolation
+                assert "--user-data-dir" in call_args
+                assert len(call_args) == 9  # Base args + --user-data-dir + path
 
     @pytest.mark.asyncio
     async def test_start_fails_if_server_exits_early(self, client):
