@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 import json
@@ -33,6 +34,7 @@ class BrowserAgent:
         self.screenshots: List[str] = []
         self.step_count: int = 0
         self.current_url: str = ""
+        self.screenshot_failures: int = 0
 
         # MCP client for browser automation
         self.mcp_client: Optional[MCPBrowserClient] = None
@@ -64,11 +66,24 @@ class BrowserAgent:
             logger.error(e)
             raise
 
-        # Take initial screenshot via MCP using helper method
-        try:
-            await self._take_screenshot_via_mcp("step_000")
-        except Exception as e:
-            logger.warning(f"Failed to take initial screenshot via MCP: {e}")
+        # Take initial screenshot via MCP using helper method with retry
+        initial_screenshot = None
+        for attempt in range(3):
+            try:
+                initial_screenshot = await self._take_screenshot_via_mcp("step_000")
+                if initial_screenshot:
+                    break
+                logger.warning(
+                    f"Initial screenshot attempt {attempt + 1} returned None, retrying..."
+                )
+                await asyncio.sleep(1)  # Wait for page to render
+            except Exception as e:
+                logger.warning(f"Initial screenshot attempt {attempt + 1} failed: {e}")
+                if attempt < 2:
+                    await asyncio.sleep(1)
+
+        if not initial_screenshot:
+            logger.error("Failed to capture initial screenshot after 3 attempts")
 
         print(f"✓ MCP Browser ready at {url}")
 
@@ -94,10 +109,37 @@ class BrowserAgent:
         if not self.mcp_client:
             return {"success": False, "error": "MCP client not started"}
 
+        result = {"success": False, "tool": tool_name, "params": params}
+
+        # INTERCEPT: Check if this is a snapshot request (read-only, not a user action)
+        is_snapshot_action = tool_name.lower() in [
+            "browser_snapshot",
+            "snapshot",
+        ]
+
+        if is_snapshot_action:
+            # Don't increment step_count - this is not a user action
+            logger.info(f"Snapshot request: {tool_name.upper()} (not counting as step)")
+
+            try:
+                mcp_result = await self.mcp_client.call_tool(tool_name, **params)
+                result["success"] = True
+                result["mcp_response"] = mcp_result
+
+                # Record in action history for debugging
+                action_str = self._format_action_for_history(tool_name, params)
+                self.action_history.append(action_str)
+                logger.info(f"✓ {action_str} (snapshot only)")
+
+            except Exception as e:
+                result["error"] = str(e)
+                logger.error(f"✗ Snapshot failed: {e}")
+
+            return result
+
+        # Increment step count for actual user actions
         self.step_count += 1
         logger.info(f"Step {self.step_count}: {tool_name.upper()}")
-
-        result = {"success": False, "tool": tool_name, "params": params}
 
         # INTERCEPT: Check if this is a browser close request
         is_close_action = tool_name.lower() in [
@@ -114,6 +156,13 @@ class BrowserAgent:
                 "⚠️ Browser close requested - intercepting (not executing on browser)"
             )
 
+            # Take final screenshot BEFORE close to capture end state for evaluation
+            logger.info("Taking final screenshot before close...")
+            try:
+                await self._take_screenshot_via_mcp(f"step_{self.step_count:03d}_final")
+            except Exception as e:
+                logger.warning(f"Failed to take final screenshot: {e}")
+
             result["success"] = True
             result["browser_closed"] = True
 
@@ -121,11 +170,6 @@ class BrowserAgent:
             action_str = self._format_action_for_history(tool_name, params)
             self.action_history.append(action_str)
             logger.info(f"✓ {action_str}")
-
-            # DO NOT take screenshot (no white page in evaluation)
-            logger.info(
-                "Skipping screenshot for browser close - session will terminate"
-            )
 
             return result
 
@@ -229,7 +273,9 @@ class BrowserAgent:
             return None
 
         try:
-            result = await self.mcp_client.call_tool("browser_take_screenshot")
+            result = await self.mcp_client.call_tool(
+                "browser_take_screenshot", type="png"
+            )
 
             # Extract base64 data from result
             # MCP server returns: {'content': [{'type': 'image', 'data': 'base64...'}]}
@@ -274,6 +320,7 @@ class BrowserAgent:
             return path_str
 
         except Exception as e:
+            self.screenshot_failures += 1
             logger.error(f"Failed to take screenshot via MCP: {e}")
             return None
 
@@ -396,6 +443,10 @@ class BrowserAgent:
         """
         Save session data in the format you specified
         """
+        # Ensure trajectory directory exists (required by evaluation scripts)
+        trajectory_dir = self.output_dir / TASK_RESULT_SCREENSHOTS_FOLDER
+        trajectory_dir.mkdir(parents=True, exist_ok=True)
+
         session_data = {
             "task_id": task_id,
             "task": task_description,
@@ -408,6 +459,8 @@ class BrowserAgent:
                 "timestamp": datetime.now().isoformat(),
                 "total_steps": self.step_count,
                 "final_url": self.current_url,
+                "screenshot_count": len(self.screenshots),
+                "screenshot_failures": self.screenshot_failures,
             },
         }
 
@@ -416,4 +469,14 @@ class BrowserAgent:
             json.dump(session_data, f, indent=2)
 
         print(f"\n💾 Session saved to: {output_file}")
+
+        # Log screenshot summary
+        if self.screenshot_failures > 0:
+            logger.warning(
+                f"⚠️ Screenshot summary: {len(self.screenshots)} captured, "
+                f"{self.screenshot_failures} failed"
+            )
+        else:
+            logger.info(f"📸 Screenshots captured: {len(self.screenshots)}")
+
         return session_data

@@ -1,0 +1,17 @@
+[green_agent]
+endpoint = "http://127.0.0.1:9009"
+cmd = "uv run python scenarios/web_browser/browser_judge.py --host 127.0.0.1 --port 9009"
+
+[[participants]]
+role = "white_agent"
+endpoint = "http://127.0.0.1:9019"
+cmd = "uv run python -m scenarios.web_browser.agents.reliability --host 127.0.0.1 --port 9019"
+
+[config]
+max_steps = 10
+
+[[tasks]]
+task_id = "reliability_sl_se_travel_time"
+website = "https://sl.se/"
+task = "Find the travel time from T-Centralen to Artipelag using the SL.se journey planner."
+level = "easy"

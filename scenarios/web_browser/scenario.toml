@@ -5,7 +5,7 @@ cmd = "uv run python scenarios/web_browser/browser_judge.py --host 127.0.0.1 --p
 [[participants]]
 role = "white_agent"
 endpoint = "http://127.0.0.1:9019"
-cmd = "uv run python scenarios/web_browser/white_agent.py --host 127.0.0.1 --port 9019"
+cmd = "uv run python -m scenarios.web_browser.agents.adk_default --host 127.0.0.1 --port 9019"
 
 [config]
 max_steps = 10

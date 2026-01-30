@@ -14,3 +14,9 @@ __pycache__/
 !README.md
 
 .claude
+
+# Local specs and feature tracking (not for version control)
+FEATURES.json
+specs/
+data/
+opencode.jsonc

@@ -1,5 +1,5 @@
 # Dockerfile.purple - Purple Agent (Web Browser Navigation Agent)
-# This image runs the white_agent.py as a purple/competitor agent on AgentBeats
+# This image runs white agents from agents/ directory as a purple/competitor agent on AgentBeats
 
 FROM mcr.microsoft.com/playwright/python:v1.55.0-noble
 
@@ -39,6 +39,10 @@ COPY .env.example ./.env.example
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV GOOGLE_GENAI_USE_VERTEXAI=FALSE
+
+# Allow baking agent type at build time for per-agent images
+ARG AGENT_TYPE=""
+ENV AGENT_TYPE=${AGENT_TYPE}
 
 # Expose port for purple agent (default 9019)
 EXPOSE 9019

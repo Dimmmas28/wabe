@@ -262,7 +262,12 @@ Examples:
             sys.exit(1)
 
         run_container(
-            args.tag, args.show_logs, args.env_file, args.scenario, args.limit, args.level
+            args.tag,
+            args.show_logs,
+            args.env_file,
+            args.scenario,
+            args.limit,
+            args.level,
         )
 
 

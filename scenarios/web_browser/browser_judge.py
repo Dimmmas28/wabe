@@ -263,20 +263,22 @@ class BrowserJudge(GreenAgent):
                 )
                 task_success = r.success
 
-            task_details.append({
-                "task_id": r.task_id,
-                "task_id_with_timestamp": r.task_id_with_timestamp,
-                "website": r.website,
-                "task_description": r.task_description,
-                "level": r.level,
-                "success": task_success,
-                "steps_taken": r.step_count,
-                "max_steps": r.max_steps,
-                "thoughts": r.thoughts,
-                "action_history": r.action_history,
-                "screenshots": r.screenshots,
-                "error": r.error_message,
-            })
+            task_details.append(
+                {
+                    "task_id": r.task_id,
+                    "task_id_with_timestamp": r.task_id_with_timestamp,
+                    "website": r.website,
+                    "task_description": r.task_description,
+                    "level": r.level,
+                    "success": task_success,
+                    "steps_taken": r.step_count,
+                    "max_steps": r.max_steps,
+                    "thoughts": r.thoughts,
+                    "action_history": r.action_history,
+                    "screenshots": r.screenshots,
+                    "error": r.error_message,
+                }
+            )
 
         # Calculate successful_tasks from LLM-evaluated success for consistency
         successful_tasks = sum(1 for t in task_details if t["success"])
