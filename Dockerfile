@@ -40,7 +40,6 @@ RUN uv sync --frozen --python /usr/bin/python3
 # Copy project source code
 COPY src/ ./src/
 COPY scenarios/ ./scenarios/
-COPY data/ ./data/
 COPY .env.example ./.env.example
 
 # Create output directories
@@ -50,6 +49,10 @@ RUN mkdir -p .output .logs
 ENV PYTHONUNBUFFERED=1
 ENV GOOGLE_GENAI_USE_VERTEXAI=FALSE
 ENV HEADLESS=true
+
+# Allow baking eval model at build time for green agent
+ARG EVAL_MODEL="gemini-2.5-flash"
+ENV EVAL_MODEL=${EVAL_MODEL}
 
 # Expose ports for both agents
 EXPOSE 9009 9019

@@ -9,8 +9,22 @@ __pycache__/
 .logs/
 .output/
 
-# Ignore markdown files except README.md
+# Ignore markdown files except README.md and PURPLE_AGENT_GUIDE.md
 *.md
 !README.md
+!PURPLE_AGENT_GUIDE.md
 
 .claude
+
+# Local specs and feature tracking (not for version control)
+FEATURES.json
+specs/
+data/
+opencode.jsonc
+
+# Runtime output files
+action_logs.txt
+*.json
+!package.json
+!package-lock.json
+!pyproject.json

@@ -43,6 +43,17 @@ def build_tools_prompt(tools: List[Dict[str, Any]]) -> str:
             lines.append("  Parameters:")
             lines.extend(param_strs)
 
+    # Add format reminder
+    lines.append("")
+    lines.append("=" * 40)
+    lines.append("RESPONSE FORMAT (required):")
+    lines.append(
+        "Wrap your response in <json></json> tags (NOT markdown ```json fences):"
+    )
+    lines.append("<json>")
+    lines.append('{"thought": "...", "tool": "tool_name", "params": {...}}')
+    lines.append("</json>")
+
     return "\n".join(lines)
 
 
@@ -124,6 +135,13 @@ You MUST respond with JSON wrapped in <json></json> tags in this EXACT format:
     "params": {{"param_name": "param_value"}}
 }}
 </json>
+
+WARNING - COMMON MISTAKE:
+Do NOT use markdown code fences. This is WRONG:
+```json
+{{"thought": "..."}}
+```
+The parser will REJECT responses with ```json. Use <json></json> tags ONLY.
 
 EXAMPLES OF VALID RESPONSES:
 

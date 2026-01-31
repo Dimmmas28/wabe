@@ -16,10 +16,10 @@ class Config(BaseModel):
     score_threshold: int = 3
 
 
-def run_benchmark_eval(data: Config, num_workers: int = 60) -> float:
+def run_benchmark_eval(data: Config, num_workers: int = 1) -> float:
     try:
-        success_rate = parallel_eval(data, num_workers)
-        return success_rate
+        pass_rate = parallel_eval(data, num_workers)
+        return pass_rate
     except Exception as e:
         logger.exception(f"Unexpected error during evaluation: {str(e)}")
         return 0

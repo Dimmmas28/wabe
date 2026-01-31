@@ -1,748 +1,420 @@
 # WABE - Web Agent Browser Evaluation
 
-A browser automation benchmark using the AgentBeats framework. WABE evaluates AI agents on their ability to navigate websites and complete realistic web tasks using the A2A (Agent-to-Agent) protocol.
+A browser automation benchmark for evaluating AI agents on realistic web tasks. WABE uses the [AgentBeats](https://agentbeats.dev/) framework with the A2A (Agent-to-Agent) protocol for standardized, reproducible evaluation.
+
+Developed for the [UC Berkeley Agentic AI Course 2025](https://agenticai-learning.org/f25).
+
+## Overview
+
+WABE evaluates how well AI agents can navigate websites and complete tasks like "Find theatre events in Las Vegas" or "Browse credit card options on Marriott.com". The system uses:
+
+- **A2A Protocol** - Standardized agent-to-agent communication
+- **MCP (Model Context Protocol)** - Browser automation via Playwright
+- **Accessibility Snapshots** - Structured representation of web pages for LLM reasoning
+
+## Key Concepts
+
+| Term | Role | Description |
+|------|------|-------------|
+| **Green Agent** | Judge | The benchmark/evaluator. Controls the browser, provides page state, scores results. Does NOT help the challenger. |
+| **Purple Agent** | Challenger | Your agent being evaluated. Receives a task once, must remember the goal, track its own progress, and maintain correct response format throughout. |
+| **AgentBeats** | Platform | Leaderboard at [agentbeats.dev](https://agentbeats.dev) for competitive evaluation |
+
+### Judge vs Challenger Responsibilities
+
+**Green Agent (Judge):**
+- Provides the task description **once** at the start
+- Sends current page snapshot and screenshot on each step
+- Provides available tools and response format requirements with each message
+- Executes actions returned by the challenger
+- Evaluates final results
+- Does NOT remind the challenger of the task or history
+
+**Purple Agent (Challenger):**
+- Remembers the goal from the first message
+- Tracks its own action history mentally
+- Maintains correct response format (`<json></json>` tags) on EVERY response
+- Decides when the task is complete or when to give up
+- Must be **self-sufficient** - the judge won't hand-hold
 
 ## Quick Start
-
-> **Docker Users**: See [Docker Usage](#docker-usage) section for containerized setup.
 
 ### Prerequisites
 
 - Python 3.10+
 - [uv](https://github.com/astral-sh/uv) package manager
-- Google API key (for Gemini model)
-- Playwright browsers
+- Google API key ([get one here](https://aistudio.google.com/app/apikey))
 
 ### Installation
 
 ```bash
-# Clone the repository
-git clone <repository-url>
+git clone https://github.com/hjerpe/wabe.git
 cd wabe
 
-# Install dependencies
 uv sync
-
-# Install Playwright browsers
 playwright install
 
-# Set up environment variables
 cp .env.example .env
 # Edit .env and add your GOOGLE_API_KEY
 ```
 
-### Running WABE
+### Run Evaluation
 
-Run the complete evaluation with a single command:
+The scenario file determines which purple agent runs:
 
 ```bash
+# Default agent (adk_default - uses Google Gemini)
 uv run agentbeats-run scenarios/web_browser/scenario.toml
+
+# Full task suite with default agent
+uv run agentbeats-run scenarios/web_browser/scenario_full.toml
+
+# Reliability agent (deterministic replay, no LLM - for testing)
+uv run agentbeats-run scenarios/web_browser/scenario_reliability.toml
 ```
 
-That's it! The system will:
-1. Start the green agent (browser judge) on port 9009
-2. Start the white agent (web automation) on port 9019
-3. Execute the browser automation task
-4. Save results to `.output/` directory
-5. Shut down cleanly when complete
+Each scenario file specifies:
+- Which purple agent to use (`[[participants]]` section)
+- Which tasks to run (`[[tasks]]` sections)
+- Configuration like `max_steps`
+
+Results are saved to `.output/results/` with screenshots and evaluation data.
 
 ## Docker Usage
 
-### Prerequisites
-
-- Docker installed ([Get Docker](https://docs.docker.com/get-docker/))
-- Google API key ([Get API key](https://aistudio.google.com/app/apikey))
-
-### Quick Start (Recommended)
-
-**Using the Python script (easiest):**
+### Recommended: Python Script
 
 ```bash
-# 1. Create .env file with your API key
-echo "GOOGLE_API_KEY=your_api_key_here" > .env
+# Create .env with your API key
+echo "GOOGLE_API_KEY=your_key_here" > .env
 
-# 2. Run everything with one command
+# Run evaluation
 python run-docker.py
 ```
 
-The script will automatically:
-- Build the Docker image (if needed)
-- Validate your API key
-- Run the evaluation with proper volume mounts
-- Show results location
-
-**Options:**
+**Common options:**
 ```bash
-python run-docker.py --build                              # Force rebuild image
-python run-docker.py --show-logs                          # Show live logs
-python run-docker.py --scenario scenarios/custom.toml     # Use custom scenario file
-python run-docker.py --level easy                         # Run only easy tasks
-python run-docker.py --limit 5                            # Run first 5 tasks only
-python run-docker.py --level hard --limit 3               # Run first 3 hard tasks
-python run-docker.py --build-only                         # Just build, don't run
-python run-docker.py --help                               # See all options
+python run-docker.py --show-logs              # Live output
+python run-docker.py --level easy             # Filter by difficulty
+python run-docker.py --limit 5                # Run first 5 tasks
+python run-docker.py --build                  # Force rebuild image
 ```
 
-**Using Makefile (alternative):**
+### Manual Alternative
 
-```bash
-make docker-build                                               # Build the image
-make docker-run                                                 # Run evaluation
-make docker-run SCENARIO=scenarios/web_browser/scenario_full.toml  # Use custom scenario
-make docker-run LEVEL=easy                                      # Run only easy tasks
-make docker-run LIMIT=5                                         # Run first 5 tasks
-make docker-run LEVEL=hard LIMIT=3                              # Run first 3 hard tasks
-make docker-logs                                                # Run with live logs
-make docker-logs SCENARIO=scenarios/custom.toml LEVEL=medium    # Custom scenario with medium tasks
-make help                                                       # Show all commands
-```
-
-### Manual Docker Commands
-
-If you prefer to use Docker directly:
-
-**Build the image:**
 ```bash
 docker build -t wabe:latest .
-```
-
-**Run evaluation:**
-```bash
-# Create .env file first
-echo "GOOGLE_API_KEY=your_api_key_here" > .env
-
-# Run with env file
-docker run --rm \
-  --env-file .env \
+docker run --rm --env-file .env \
   -v $(pwd)/.output:/app/.output \
-  -v $(pwd)/.logs:/app/.logs \
   wabe:latest
 ```
 
-**Run with live logs:**
-```bash
-docker run --rm \
-  --env-file .env \
-  -v $(pwd)/.output:/app/.output \
-  -v $(pwd)/.logs:/app/.logs \
-  wabe:latest \
-  uv run agentbeats-run scenarios/web_browser/scenario.toml --show-logs
-```
+## AgentBeats Leaderboard
 
-**Run with custom scenario file:**
-```bash
-docker run --rm \
-  --env-file .env \
-  -v $(pwd)/.output:/app/.output \
-  -v $(pwd)/.logs:/app/.logs \
-  wabe:latest \
-  uv run agentbeats-run scenarios/web_browser/scenario_full.toml
-```
-
-**Run with task filtering:**
-```bash
-# Run only easy tasks
-docker run --rm \
-  --env-file .env \
-  -e TASK_LEVEL=easy \
-  -v $(pwd)/.output:/app/.output \
-  -v $(pwd)/.logs:/app/.logs \
-  wabe:latest
-
-# Run first 5 tasks
-docker run --rm \
-  --env-file .env \
-  -e TASK_LIMIT=5 \
-  -v $(pwd)/.output:/app/.output \
-  -v $(pwd)/.logs:/app/.logs \
-  wabe:latest
-
-# Run first 3 hard tasks
-docker run --rm \
-  --env-file .env \
-  -e TASK_LEVEL=hard \
-  -e TASK_LIMIT=3 \
-  -v $(pwd)/.output:/app/.output \
-  -v $(pwd)/.logs:/app/.logs \
-  wabe:latest
-```
-
-### Output Files
-
-After running, results are available in:
-- `.output/results/` - Evaluation results and screenshots
-- `.logs/` - Agent logs with timestamps
-
-### Docker Command Reference
-
-| Method | Command | Description |
-|--------|---------|-------------|
-| **Python Script** | `python run-docker.py` | Build and run (recommended) |
-| | `python run-docker.py --show-logs` | Run with live logs |
-| | `python run-docker.py --scenario <path>` | Run custom scenario file |
-| | `python run-docker.py --level <easy\|medium\|hard>` | Filter tasks by difficulty |
-| | `python run-docker.py --limit <N>` | Run first N tasks |
-| | `python run-docker.py --build` | Force rebuild |
-| **Makefile** | `make docker-run` | Run evaluation |
-| | `make docker-run SCENARIO=<path>` | Run custom scenario |
-| | `make docker-run LEVEL=<easy\|medium\|hard>` | Filter tasks by difficulty |
-| | `make docker-run LIMIT=<N>` | Run first N tasks |
-| | `make docker-logs` | Run with live logs |
-| | `make docker-logs SCENARIO=<path>` | Run custom scenario with logs |
-| | `make docker-build` | Build image only |
-| **Docker CLI** | `docker build -t wabe .` | Build manually |
-| | `docker run --rm --env-file .env wabe` | Run manually |
-| | `docker run -e TASK_LEVEL=<level> ... wabe` | Filter by difficulty |
-| | `docker run -e TASK_LIMIT=<N> ... wabe` | Limit number of tasks |
-
-### AgentBeats-Compliant Arguments
-
-The Docker image accepts AgentBeats-required arguments:
-
-```bash
-docker run --env-file .env ghcr.io/hjerpe/wabe:v1.0 --host 0.0.0.0 --port 9009
-```
-
-| Argument | Description | Default |
-|----------|-------------|---------|
-| `--host` | Bind address | `127.0.0.1` |
-| `--port` | Listen port | `9009` |
-| `--card-url` | Advertised agent URL | (none) |
-
-### Troubleshooting Docker
-
-**API key not working:**
-Ensure your `.env` file or `-e` flag has the correct format:
-```bash
-GOOGLE_API_KEY=AIza...your_key_here
-```
-
-**Port already in use:**
-```bash
-# Check if ports 9009 or 9019 are in use
-docker ps
-# Stop conflicting containers
-docker stop <container_id>
-```
-
-**Out of disk space:**
-```bash
-# Clean up unused Docker resources
-docker system prune -a
-```
-
-## Publishing to AgentBeats
-
-WABE is ready to publish on [AgentBeats](https://agentbeats.dev/) - the platform for standardized AI agent evaluation.
-
-### Pre-built Image
-
-A pre-built Docker image is available on GitHub Container Registry:
-
-```bash
-docker pull ghcr.io/hjerpe/wabe:v1.0
-```
-
-### Building for AgentBeats
-
-AgentBeats requires `linux/amd64` platform:
-
-```bash
-docker build --platform linux/amd64 -t ghcr.io/<username>/wabe:v1.0 .
-docker push ghcr.io/<username>/wabe:v1.0
-```
-
-### CI/CD with GitHub Actions
-
-The repository includes a GitHub Actions workflow (`.github/workflows/docker-publish.yml`) that automatically:
-
-- Builds on push to `main` branch or version tags (`v*`)
-- Targets `linux/amd64` platform
-- Pushes to GitHub Container Registry (`ghcr.io`)
-- Supports caching for faster builds
-
-**Triggering a build:**
-- Push to `main`: Builds and pushes `latest` tag
-- Push a version tag: `git tag v1.0.0 && git push origin v1.0.0`
-- Manual trigger: GitHub Actions → "Build and Push Docker Image" → "Run workflow"
-
-### Registering on AgentBeats
-
-1. Go to https://agentbeats.dev/
-2. Login and register your agent
-3. Provide Docker image reference: `ghcr.io/<username>/wabe:v1.0`
-4. Fill in metadata (name, description)
-5. Register a "battle" to test your agent
-
-**Note:** AgentBeats runs Docker images via GitHub Actions - no live hosting required.
-
-## Architecture
-
-WABE follows the [AgentBeats](https://agentbeats.dev/) evaluation framework pattern:
-
-### Components
-
-**Green Agent (Judge)** - `scenarios/web_browser/browser_judge.py`
-- Orchestrates browser automation evaluation
-- Manages browser via MCP (Model Context Protocol)
-- Sends accessibility snapshot + task description to white agent via A2A protocol
-- Executes actions received from white agent
-- Evaluates task completion
-
-**White Agent (Participant)** - `scenarios/web_browser/white_agent.py`
-- Receives accessibility snapshot and task via A2A protocol
-- Uses Google Gemini 2.0 Flash (`gemini-2.0-flash-exp`) to reason about actions
-- Returns structured JSON with dynamically-discovered tool calls
-- Built with Google ADK (Agent Development Kit)
-
-**A2A Protocol**
-- Standardized agent-to-agent communication
-- JSON-based message passing
-- Agent cards for capability discovery
-- Task and artifact management
-
-### Data Flow
-
-```
-1. AgentBeats loads scenario.toml configuration
-2. Green agent starts MCP server → navigates to target website
-3. Green agent extracts accessibility snapshot → sends to white agent
-4. White agent (LLM) analyzes snapshot + task → returns MCP tool call
-5. Green agent executes tool via MCP client
-6. Repeat steps 3-5 until task complete or max steps reached
-7. Green agent evaluates result → creates artifact
-```
-
-## MCP Integration
-
-WABE uses the **Model Context Protocol (MCP)** for browser automation, replacing direct Playwright API calls with a dynamic, protocol-based architecture.
-
-### What is MCP?
-
-[Model Context Protocol](https://modelcontextprotocol.io) is a standardized protocol for connecting AI systems to external tools and data sources. WABE uses the [Playwright MCP Server](https://github.com/modelcontextprotocol/servers/tree/main/src/playwright) to provide browser automation capabilities.
-
-### Architecture: Dynamic Tool Discovery
-
-**Key Design Principles:**
-- ✅ **Zero hardcoded tools** - All browser tools discovered at runtime via MCP `tools/list`
-- ✅ **No hardcoded parameters** - Tool schemas and parameters validated against JSON Schema
-- ✅ **Future-proof** - Code adapts automatically when MCP server tools change
-- ✅ **Generic routing** - Any MCP tool callable with parameter validation
-
-**Traditional Approach (Hardcoded):**
-```python
-# ❌ Breaks if Playwright API changes
-async def click(self, selector):
-    await self.page.click(selector)
-```
-
-**MCP Approach (Dynamic):**
-```python
-# ✅ Discovers tools at runtime, validates parameters
-tools = await client.list_tools()  # Discovers 20+ browser tools
-await client.call_tool("browser_click", ref="s15")
-```
+WABE powers a competitive leaderboard where AI agents are evaluated on web automation tasks.
 
 ### How It Works
 
-```
-┌─────────────────┐         ┌──────────────────┐
-│  BrowserAgent   │  stdin  │   MCP Server     │
-│  (Python)       │ ──────> │   (@playwright/  │
-│                 │  stdout │    mcp)          │
-│  MCPBrowserClient<─────── │                  │
-└─────────────────┘ JSON-RPC└──────────────────┘
-         │                           │
-         │  1. tools/list            │
-         │  ────────────────────────>│
-         │                           │
-         │  2. Returns tool schemas  │
-         │  <────────────────────────│
-         │                           │
-         │  3. tools/call: browser_navigate
-         │  ────────────────────────>│
-         │                           │
-         │  4. Returns result        │
-         │  <────────────────────────│
-```
+1. **Green Agent** (this repo) runs as the judge on AgentBeats infrastructure
+2. **Purple Agents** (participants) are Docker images that compete
+3. AgentBeats pulls images from registries and runs evaluations automatically
 
-### Code Examples
+### Participating
 
-**Listing Available Tools:**
-```python
-from shared.mcp_client import MCPBrowserClient
+To submit your agent to the leaderboard:
 
-client = MCPBrowserClient()
-await client.start()
+1. Fork the [WABE AgentBeats Leaderboard](https://github.com/hjerpe/WABE-agentbeats-leaderboard) repository
+2. Build your purple agent as a Docker image
+3. Register on [agentbeats.dev](https://agentbeats.dev)
 
-# Discover all available browser tools
-tools = await client.list_tools()
-for tool in tools:
-    print(f"{tool['name']}: {tool['description']}")
-    # Example output:
-    # browser_navigate: Navigate to a URL
-    # browser_click: Click an element
-    # browser_type: Type text into an element
-    # browser_take_screenshot: Capture a screenshot
-```
+See [PURPLE_AGENT_GUIDE.md](PURPLE_AGENT_GUIDE.md) for detailed requirements.
 
-**Calling Tools Dynamically:**
-```python
-# Navigate to website
-await client.call_tool("browser_navigate", url="https://example.com")
+### Pre-built Images
 
-# Take screenshot (returns base64-encoded image)
-result = await client.call_tool("browser_take_screenshot")
-
-# Click element using accessibility snapshot ref
-await client.call_tool("browser_click", ref="s15")
-
-# Type into element
-await client.call_tool("browser_type", ref="s8", text="search query")
-```
-
-**Parameter Validation:**
-```python
-# Invalid parameters are caught before execution
-try:
-    await client.call_tool("browser_click")  # Missing required 'ref'
-except RuntimeError as e:
-    print(e)  # "Validation failed: Missing required field 'ref'"
-```
-
-### MCP Server Management
-
-The MCP server runs as a subprocess managed by `MCPBrowserClient`:
-
-- **Auto-start**: Server launches automatically on `client.start()`
-- **Auto-stop**: Server terminates on `client.stop()` (graceful shutdown)
-- **Health checks**: Process monitored for crashes
-- **Timeouts**: All JSON-RPC calls protected with timeouts
-- **Docker compatible**: Works seamlessly in containerized environments
-
-### Accessibility Snapshots
-
-Instead of raw HTML, WABE uses **accessibility snapshots** - structured representations of interactive elements:
-
-```
-textbox "Search events" [ref=s8]
-button "Search" [ref=s12]
-link "Las Vegas" [ref=s20]
-```
-
-**Benefits:**
-- Smaller context (vs. full HTML)
-- Focus on interactive elements only
-- Clear element references for targeting
-- Compatible with Mind2Web evaluation format
-
-### Resources
-
-- **MCP Specification**: https://modelcontextprotocol.io
-- **Playwright MCP Server**: https://github.com/modelcontextprotocol/servers/tree/main/src/playwright
-- **MCP Python SDK**: https://github.com/modelcontextprotocol/python-sdk
-
-## Environment Setup
-
-### Required Environment Variables
-
-Create a `.env` file (copy from `.env.example`):
+Pre-built agent images are available:
 
 ```bash
-# Use standard Google AI API (not Vertex AI)
-GOOGLE_GENAI_USE_VERTEXAI=FALSE
+# Green agent (judge)
+docker pull ghcr.io/hjerpe/wabe:latest
 
-# Your Google API key for Gemini models
-# Get one at: https://aistudio.google.com/app/apikey
-GOOGLE_API_KEY=your_api_key_here
+# Purple agents (participants)
+docker pull ghcr.io/hjerpe/wabe-purple-adk_default:latest
+docker pull ghcr.io/hjerpe/wabe-purple-reliability:latest
 ```
 
-### Optional Configuration
+### Building All Images
 
-Edit `scenarios/web_browser/scenario.toml` to customize:
+Build both green and purple agent images with a single command:
 
-```toml
-[config]
-task_id = "20a460a8fe1971b84411c5b1e6ac4186"  # Task from data/tasks.json
-max_steps = 10                                 # Maximum interaction steps
+```bash
+# Build all images (green + all purple agents)
+./scripts/build-all-images.sh
+
+# Build and push all to registry
+./scripts/build-all-images.sh --push
+
+# Build with custom models (useful if rate-limited on default model)
+./scripts/build-all-images.sh --model gemini-2.0-flash --eval-model gemini-2.0-flash --push
+
+# Build only green or only purple agents
+./scripts/build-all-images.sh --green-only --push
+./scripts/build-all-images.sh --purple-only --push
+
+# Build green + specific purple agent
+./scripts/build-all-images.sh react_adk --push
 ```
 
-## Output Structure
+### Building Green Agent Image
 
-After running an evaluation, outputs are saved to:
+The green agent (browser judge) runs evaluation and controls the browser:
+
+```bash
+# Build image
+./scripts/build-green-image.sh
+
+# Build with custom eval model
+./scripts/build-green-image.sh --eval-model gemini-2.0-flash
+
+# Build and push to registry
+./scripts/build-green-image.sh --push
+```
+
+### Building Purple Agent Images
+
+Purple agents are the participants being evaluated:
+
+```bash
+# List available agents
+./scripts/build-purple-images.sh --list
+
+# Build all agents
+./scripts/build-purple-images.sh
+
+# Build specific agent
+./scripts/build-purple-images.sh reliability
+
+# Build with custom model (e.g., if hitting rate limits on gemini-2.5-flash)
+./scripts/build-purple-images.sh --model gemini-2.0-flash
+
+# Build and push to registry
+./scripts/build-purple-images.sh --push
+```
+
+Any `.py` file in `scenarios/web_browser/agents/` is automatically discoverable and buildable.
+
+### Model Options
+
+By default, agents use `gemini-2.5-flash`. If you hit rate limits (429 RESOURCE_EXHAUSTED), you can use an alternative model:
+
+| Model | Use Case |
+|-------|----------|
+| `gemini-2.5-flash` | Default, best quality |
+| `gemini-2.0-flash` | Alternative if rate-limited on 2.5 |
+| `gemini-2.5-pro` | Higher quality, slower, more expensive |
+
+**Note:** The `reliability` agent doesn't use an LLM (deterministic replay), so `--model` has no effect on it.
+
+## Architecture
 
 ```
-.output/results/
-└── {task_id}/
-    ├── result.json      # Evaluation results and metadata
-    └── trajectory    
-    └── └── step_000.png         # Screenshot(s) of browser state
+┌─────────────────────────────────────────────────────────────┐
+│                      AgentBeats                             │
+│  ┌──────────────┐              ┌──────────────┐             │
+│  │ Green Agent  │◄────A2A────► │ Purple Agent │             │
+│  │   (Judge)    │              │ (Participant)│             │
+│  └──────┬───────┘              └──────────────┘             │
+│         │                                                   │
+│         │ MCP                                               │
+│         ▼                                                   │
+│  ┌──────────────┐                                           │
+│  │  Playwright  │                                           │
+│  │   Browser    │                                           │
+│  └──────────────┘                                           │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### Example Output JSON
+**Flow:**
+1. Green agent navigates to target website
+2. Green agent extracts accessibility snapshot, sends to purple agent
+3. Purple agent analyzes snapshot + task, returns action (click, type, etc.)
+4. Green agent executes action via MCP
+5. Repeat until task complete or max steps reached (default: 15)
 
+**Key files:**
+- `scenarios/web_browser/browser_judge.py` - Green agent (judge)
+- `scenarios/web_browser/agents/adk_default.py` - Default purple agent (Google Gemini)
+- `scenarios/web_browser/agents/reliability.py` - Deterministic replay agent for testing
+
+## Evaluation Metrics
+
+WABE uses a **two-stage evaluation** process. Understanding these metrics is important for interpreting leaderboard results.
+
+> **Important:** The `success_rate` is computed by an LLM judge analyzing screenshots - it is NOT simply `successful_tasks / total_tasks`. The `successful_tasks` field counts how many tasks the agent *attempted to complete* (by calling `finish`), while `success_rate` measures how many the LLM judge determined were *actually completed correctly*. These are different values! Future versions will rename these fields to avoid confusion.
+
+### Stage 1: Browser Loop (Purple Agent Execution)
+
+The purple agent executes actions until it signals completion (via `finish` tool) or reaches `max_steps`. This produces:
+
+- **Task completion signal** - Did the purple agent call `finish` or `browser_close`?
+- **Action history** - List of actions executed
+- **Screenshots** - Captured after each action
+
+### Stage 2: LLM Evaluation (Green Agent Judgment)
+
+After all tasks complete, the green agent runs an **LLM-based evaluation** that reviews screenshots and action history to determine if tasks were *actually* completed correctly.
+
+The LLM judge:
+1. Identifies **key points** from the task description
+2. Scores each screenshot (1-5) for relevance to task completion
+3. Reviews screenshots scoring >= 3 along with action history
+4. Outputs `success` or `failure` for each task
+
+The `success_rate` is computed from these LLM judgments, not from `successful_tasks / total_tasks`.
+
+**Token Usage Warning:** The LLM evaluation passes multiple screenshots (one per step) to the judge model. With the default `max_steps=15`, this can consume significant tokens per task. If you hit rate limits (tokens per minute), increase the delay between evaluations in `src/eval/online_mind2web/run.py` (`INTER_TASK_DELAY`).
+
+### Metrics in Results JSON
+
+| Metric | Set By | Description |
+|--------|--------|-------------|
+| `success_rate` | Green Agent (LLM eval) | **Primary metric.** Percentage of tasks the LLM judged as successfully completed. Computed by LLM analysis of screenshots, NOT from `successful_tasks / total_tasks`. Range: 0-100. |
+| `successful_tasks` | Green Agent | Count of tasks where the agent called `finish` or `browser_close` (i.e., the agent *claimed* to complete the task). This does NOT mean the LLM agreed the task was successful. |
+| `total_tasks` | Green Agent | Total number of tasks evaluated. |
+| Per-task `success` | Green Agent | LLM-evaluated success status. Falls back to browser loop completion if LLM evaluation fails (e.g., no screenshots). |
+
+### Why Metrics Can Diverge
+
+The `success_rate` and `successful_tasks` measure different things:
+
+- `successful_tasks` = How many tasks the agent *tried* to complete (called `finish`)
+- `success_rate` = What percentage the LLM judge verified as *actually* completed
+
+They will often diverge because:
+
+1. **Agent claims success, LLM disagrees** - Agent called `finish` but didn't actually complete the task correctly
+2. **No screenshots captured** - LLM has nothing to evaluate, returns low `success_rate`, but agent may have called `finish`
+
+**Example of divergence:**
 ```json
 {
-  "task_id": "20a460a8fe1971b84411c5b1e6ac4186",
-  "task": "Show theatre events for Las Vegas and select one.",
-  "final_result_response": "Task failed after 1 steps",
-  "action_history": [],
-  "thoughts": [],
-  "screenshots": [".output/results/20a460a8fe1971b84411c5b1e6ac4186/trajectory/step_000.png"],
-  "metadata": {
-    "timestamp": "2025-11-23T10:56:15.079038",
-    "total_steps": 0,
-    "final_url": "https://www.stubhub.com/"
-  }
+  "success_rate": 5.88,          // LLM judge: only 1 task was actually completed correctly
+  "successful_tasks": 16,        // Agent called finish on 16 tasks
+  "total_tasks": 17
 }
 ```
 
-## Reading Logs
+In this example, the agent *claimed* to complete 16/17 tasks, but the LLM judge determined only ~1 task (5.88%) was actually done correctly.
 
-### Real-time Logs
+### Leaderboard Query
 
-Use the `--show-logs` flag to see live output:
+The leaderboard uses `success_rate` (LLM-judged) as the primary metric:
+
+```sql
+SELECT 
+  t.participants.white_agent AS id, 
+  ROUND(unnest.detail.success_rate, 1) AS "Success Rate",
+  unnest.detail.successful_tasks AS "Completed",
+  unnest.detail.total_tasks AS "# Tasks"
+FROM results t, UNNEST(t.results) 
+ORDER BY "Success Rate" DESC;
+```
+
+### Per-Task Metrics
+
+Each task in the `tasks` array includes:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `success` | bool | LLM-evaluated success status (with browser loop completion fallback) |
+| `steps_taken` | int | Number of actions executed |
+| `max_steps` | int | Maximum allowed steps |
+| `level` | string | Difficulty: `easy`, `medium`, `hard` |
+| `thoughts` | list | Agent's reasoning at each step |
+| `action_history` | list | Actions in Mind2Web format |
+| `screenshots` | list | Screenshot file paths |
+| `error` | string/null | Error message if execution failed |
+
+## Output Structure
+
+Results are saved to `.output/results/{task_id}/`:
+
+```
+.output/results/
+└── 20a460a8fe1971b84411c5b1e6ac4186/
+    ├── result.json           # Evaluation results
+    └── trajectory/
+        └── step_000.png      # Screenshots
+```
+
+## Logging
+
+View live logs during execution:
 
 ```bash
 uv run agentbeats-run scenarios/web_browser/scenario.toml --show-logs
 ```
 
-This displays real-time logs from both agents as they communicate.
-
-### Log Files
-
-Logs are saved to `.logs/` directory with timestamps:
-
-```
-.logs/
-├── 2025-11-19_20-23-13_green.log   # Green agent logs
-├── 2025-11-19_20-23-27_white.log   # White agent logs
-└── 2025-11-19_20-23-38_app.log     # Main application logs
-```
-
-### Example Log Output
-
-**Green Agent Log** (`.logs/YYYY-MM-DD_HH-MM-SS_green.log`):
-```
-2025-11-19 20:23:38,225 - green_agent.default_agent - INFO - ============================================================
-2025-11-19 20:23:38,225 - green_agent.default_agent - INFO - STARTING TASK EVALUATION
-2025-11-19 20:23:38,225 - green_agent.default_agent - INFO - Task ID: 20a460a8fe1971b84411c5b1e6ac4186
-2025-11-19 20:23:38,225 - green_agent.default_agent - INFO - Task: Show theatre events for Las Vegas and select one.
-2025-11-19 20:23:38,225 - green_agent.default_agent - INFO - Website: https://www.stubhub.com/
-2025-11-19 20:24:02,602 - green_agent.default_agent - INFO - STEP 1/10
-2025-11-19 20:24:03,500 - green_agent.utils.a2a_client - INFO - → GREEN AGENT: Sending to white agent...
-```
-
-**White Agent Log** (`.logs/YYYY-MM-DD_HH-MM-SS_white.log`):
-```
-2025-11-19 20:23:27,312 - uvicorn.error - INFO - Application startup complete.
-2025-11-19 20:23:27,314 - uvicorn.error - INFO - Uvicorn running on http://localhost:9002 (Press CTRL+C to quit)
-2025-11-19 20:24:03,561 - white_agent.a2a.agent_executor - INFO - TASK: Show theatre events for Las Vegas and select one.
-```
-
-### What to Look For
-
-- **Green agent startup**: `Uvicorn running on http://localhost:9009`
-- **White agent startup**: `Uvicorn running on http://localhost:9019`
-- **Task submission**: `STARTING TASK EVALUATION`
-- **A2A communication**: `→ GREEN AGENT: Sending to white agent...`
-- **Actions executed**: Look for tool calls (click, type, etc.)
-- **Errors**: Search for `ERROR` or `RESOURCE_EXHAUSTED` (API quota)
-
-## Troubleshooting
-
-### API Quota Errors (429 RESOURCE_EXHAUSTED)
-
-**Problem**: Google Gemini free tier has rate limits
-
-```
-google.api_core.exceptions.ResourceExhausted: 429 RESOURCE_EXHAUSTED
-```
-
-**Solutions**:
-1. Wait for quota reset (usually hourly)
-2. Use a paid Google Cloud API key
-3. Reduce `max_steps` in scenario.toml
-4. Switch to a different model (edit `white_agent.py`)
-
-### Port Already in Use
-
-**Problem**: Ports 9009 or 9019 already occupied
-
-**Solutions**:
-```bash
-# Find and kill process using port
-lsof -ti:9009 | xargs kill -9
-lsof -ti:9019 | xargs kill -9
-
-# Or edit scenario.toml to use different ports
-```
-
-### Playwright Browser Not Installed
-
-**Problem**: `playwright._impl._errors.Error: Executable doesn't exist`
-
-**Solution**:
-```bash
-playwright install
-```
-
-### Missing Google API Key
-
-**Problem**: `GOOGLE_API_KEY environment variable not set`
-
-**Solution**:
-1. Get API key: https://aistudio.google.com/app/apikey
-2. Add to `.env` file: `GOOGLE_API_KEY=your_key_here`
-
-## Testing Flags
-
-### Show Logs
-
-Display real-time logs from both agents:
-
-```bash
-uv run agentbeats-run scenarios/web_browser/scenario.toml --show-logs
-```
-
-### Serve Only
-
-Start agents without running evaluation (useful for debugging):
-
-```bash
-uv run agentbeats-run scenarios/web_browser/scenario.toml --serve-only
-```
-
-Agents will stay running on their ports. Test manually:
-
-```bash
-# Check green agent card
-curl http://localhost:9009/.well-known/agent-card.json
-
-# Check white agent card
-curl http://localhost:9019/.well-known/agent-card.json
-```
-
-Press Ctrl+C to stop.
+Log files are saved to `.logs/` with timestamps.
 
 ## Project Structure
 
 ```
 wabe/
-├── .github/
-│   └── workflows/
-│       └── docker-publish.yml # CI/CD for ghcr.io publishing
-├── scenarios/
-│   └── web_browser/           # Browser automation scenario
-│       ├── scenario.toml      # AgentBeats configuration
-│       ├── browser_judge.py   # Green agent (judge)
-│       └── white_agent.py     # White agent (participant)
+├── scenarios/web_browser/     # Browser evaluation scenario
+│   ├── scenario.toml          # Task configuration
+│   ├── browser_judge.py       # Green agent (judge)
+│   └── agents/                # Purple agent implementations
 ├── src/
 │   ├── agentbeats/            # AgentBeats framework
-│   ├── shared/                # Shared browser automation code
-│   │   ├── mcp_client.py      # MCP protocol client (452 lines)
-│   │   ├── browser_agent.py   # Browser automation via MCP (398 lines)
-│   │   └── response_parser.py # Parse white agent responses
-│   └── green_agent/           # Green agent utilities
-│       └── prompts.py         # Dynamic tool prompt generation
-├── data/
-│   └── tasks.json             # Task definitions
-├── Dockerfile                 # Multi-stage Docker build
-├── docker-entrypoint.sh       # AgentBeats-compliant entrypoint
-├── .output/                   # Evaluation results (gitignored)
-├── .logs/                     # Log files (gitignored)
-├── .env                       # API keys (gitignored)
-└── .env.example               # Environment template
+│   └── shared/                # MCP client, browser automation
+├── scripts/                   # Development scripts
+├── Dockerfile                 # Green agent image
+└── Dockerfile.purple          # Purple agent image
+```
+
+## Sample Tasks
+
+Sample random tasks by difficulty level (outputs TOML format for easy copying):
+
+```bash
+# 3 random tasks per level (easy, medium, hard)
+uv run python scripts/sample_tasks.py
+
+# Reproducible sampling with seed
+uv run python scripts/sample_tasks.py --seed 42
+
+# 5 tasks per level
+uv run python scripts/sample_tasks.py --count 5
+```
+
+## Validate Scenario Files
+
+Check scenario TOML files for duplicate tasks, missing fields, and view statistics:
+
+```bash
+# Validate a single file
+uv run python scripts/validate_scenario.py scenarios/web_browser/scenario.toml
+
+# Validate all scenario files
+uv run python scripts/validate_scenario.py scenarios/web_browser/*.toml
+
+# Verbose mode (show statistics)
+uv run python scripts/validate_scenario.py -v scenarios/web_browser/scenario_full.toml
 ```
 
 ## Development
 
-### Adding New Tasks
-
-Edit `data/tasks.json`:
-
-```json
-{
-  "task_id": "unique_id",
-  "website": "https://example.com",
-  "task_description": "Complete this task...",
-  "level": "easy"
-}
-```
-
-Update `scenario.toml`:
-
-```toml
-[config]
-task_id = "unique_id"
-```
-
-### Modifying Agent Behavior
-
-- **Green agent logic**: Edit `scenarios/web_browser/browser_judge.py`
-- **White agent prompts**: Edit `scenarios/web_browser/white_agent.py`
-- **Browser automation**: Modify `src/green_agent/task_execution/browser_agent.py`
-
-### Development Scripts
-
-The `scripts/` directory contains shell scripts for code quality and testing:
-
-#### Formatting Code
-
-**Format code automatically:**
 ```bash
+# Format code
 ./scripts/format.sh
-```
-Runs `black` and `isort` to automatically format all Python code.
 
-**Check formatting:**
-```bash
-./scripts/check-format.sh
-```
-Verifies code formatting without making changes. (Useful for CI/CD or pre-commit hooks).
-
-#### Running Tests
-
-**Run all tests:**
-```bash
+# Run tests
 ./scripts/test.sh
-```
 
-**Run specific tests:**
-```bash
-./scripts/test.sh -v -k test_browser
-./scripts/test.sh tests/specific_test.py
-```
-
-#### Quality Checks
-
-**Run all quality checks:**
-```bash
+# Run all quality checks
 ./scripts/quality-check.sh
-```
-Runs tests, code formatting checks, and import sorting checks in sequence. Exits on first failure.
-
-#### Before Committing
-
-Run quality checks to ensure code meets project standards:
-```bash
-./scripts/quality-check.sh
-```
-
-Or format code first, then run checks:
-```bash
-./scripts/format.sh && ./scripts/quality-check.sh
 ```
 
 ## License
 
-[Add license information]
-
-## Contributing
-
-[Add contribution guidelines]
-
-
-1.Run white agent 
-2.Run green agent 
-3.Send message with task details to green agent, and agent will evaluate the white agent. This logic is inside client_cli it reads task from scenario.toml
+MIT License - see [LICENSE](LICENSE) for details.

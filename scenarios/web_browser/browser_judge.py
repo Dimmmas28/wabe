@@ -58,6 +58,10 @@ from green_agent.constants import (
 
 # Default score threshold for evaluation (matches benchmark.py default)
 EVAL_SCORE_THRESHOLD = 3
+
+# Maximum consecutive parse errors before giving up on a task
+# Prevents wasting all steps on a model that won't follow format instructions
+MAX_CONSECUTIVE_PARSE_ERRORS = 3
 from green_agent.prompts import (
     BrowserJudgePrompts,
     build_tools_prompt,
@@ -263,20 +267,22 @@ class BrowserJudge(GreenAgent):
                 )
                 task_success = r.success
 
-            task_details.append({
-                "task_id": r.task_id,
-                "task_id_with_timestamp": r.task_id_with_timestamp,
-                "website": r.website,
-                "task_description": r.task_description,
-                "level": r.level,
-                "success": task_success,
-                "steps_taken": r.step_count,
-                "max_steps": r.max_steps,
-                "thoughts": r.thoughts,
-                "action_history": r.action_history,
-                "screenshots": r.screenshots,
-                "error": r.error_message,
-            })
+            task_details.append(
+                {
+                    "task_id": r.task_id,
+                    "task_id_with_timestamp": r.task_id_with_timestamp,
+                    "website": r.website,
+                    "task_description": r.task_description,
+                    "level": r.level,
+                    "success": task_success,
+                    "steps_taken": r.step_count,
+                    "max_steps": r.max_steps,
+                    "thoughts": r.thoughts,
+                    "action_history": r.action_history,
+                    "screenshots": r.screenshots,
+                    "error": r.error_message,
+                }
+            )
 
         # Calculate successful_tasks from LLM-evaluated success for consistency
         successful_tasks = sum(1 for t in task_details if t["success"])
@@ -390,6 +396,7 @@ class BrowserJudge(GreenAgent):
         website = task_config["website"]
         task_description = task_config["task"]
         max_steps = int(task_config.get("max_steps", 10))
+        step_delay = float(task_config.get("step_delay", 2.0))
         level = task_config.get("level", "unknown")
 
         # Generate timestamp for unique directory
@@ -420,6 +427,7 @@ class BrowserJudge(GreenAgent):
 
             success, step_count, thoughts, error_message = await self._run_task_loop(
                 max_steps=max_steps,
+                step_delay=step_delay,
                 browser_agent=browser_agent,
                 tool_provider=tool_provider,
                 updater=updater,
@@ -476,6 +484,7 @@ class BrowserJudge(GreenAgent):
     async def _run_task_loop(
         self,
         max_steps: int,
+        step_delay: float,
         browser_agent: BrowserAgent,
         tool_provider: ToolProvider,
         updater: TaskUpdater,
@@ -529,16 +538,25 @@ class BrowserJudge(GreenAgent):
         )
 
         error_feedback = None
+        consecutive_parse_errors = 0
+
+        # Exponential backoff for step delay
+        # Start with configured delay, increase on rate limit errors, decrease on success
+        current_delay = step_delay
+        min_delay = step_delay  # Don't go below configured minimum
+        max_delay = step_delay * 8  # Cap at 8x the base delay
+        consecutive_successes = 0
 
         for step in range(max_steps):
             step_count = step + 1
             logger.info(f"[Task {task_idx}] Starting step {step_count}/{max_steps}")
 
             # Add delay between steps to avoid rate limiting (except first step)
-            if step > 0:
-                delay = 2
-                logger.info(f"[Task {task_idx}] Waiting {delay}s before next step...")
-                await asyncio.sleep(delay)
+            if step > 0 and current_delay > 0:
+                logger.info(
+                    f"[Task {task_idx}] Waiting {current_delay:.1f}s before next step..."
+                )
+                await asyncio.sleep(current_delay)
 
             await updater.update_status(
                 TaskState.working,
@@ -621,11 +639,18 @@ What should we do next?"""
                 Path(debug_snapshot_path).write_text(snapshot)
 
             # Send to white agent
+            # Continue same conversation - white agent controls its own history strategy
+            # (e.g., include_contents='none' for stateless, or 'default' for full history)
+            # Add timeout to prevent jobs from hanging indefinitely in CI
+            WHITE_AGENT_TIMEOUT = 300  # 5 minutes max per step
             try:
-                response_text = await tool_provider.talk_to_agent(
-                    url=white_agent_url,
-                    new_conversation=(step == 0),
-                    parts=parts,
+                response_text = await asyncio.wait_for(
+                    tool_provider.talk_to_agent(
+                        url=white_agent_url,
+                        new_conversation=(step == 0),
+                        parts=parts,
+                    ),
+                    timeout=WHITE_AGENT_TIMEOUT,
                 )
 
                 logger.info("=" * 60)
@@ -636,7 +661,48 @@ What should we do next?"""
                 logger.info(f"Full response:\n{response_text}")
                 logger.info("=" * 60)
 
+                # Success - gradually decrease delay (but not below minimum)
+                consecutive_successes += 1
+                if consecutive_successes >= 3 and current_delay > min_delay:
+                    current_delay = max(min_delay, current_delay * 0.8)
+                    logger.info(
+                        f"[Task {task_idx}] Decreased step delay to {current_delay:.1f}s after {consecutive_successes} successes"
+                    )
+
+            except asyncio.TimeoutError:
+                error_message = (
+                    f"White agent response timed out after {WHITE_AGENT_TIMEOUT}s"
+                )
+                logger.error(f"[Task {task_idx}] {error_message}")
+                # Don't retry on timeout - likely indicates a hung LLM call
+                break
+
             except Exception as e:
+                error_str = str(e).lower()
+                is_rate_limit = (
+                    "429" in error_str
+                    or "resource_exhausted" in error_str
+                    or "too many requests" in error_str
+                )
+                is_timeout = "timeout" in error_str or isinstance(e, TimeoutError)
+
+                if is_timeout:
+                    error_message = f"White agent timed out: {str(e)}"
+                    logger.error(f"[Task {task_idx}] {error_message}")
+                    break
+
+                if is_rate_limit:
+                    # Rate limit hit - increase delay exponentially
+                    consecutive_successes = 0
+                    old_delay = current_delay
+                    current_delay = min(max_delay, current_delay * 2)
+                    logger.warning(
+                        f"[Task {task_idx}] Rate limit hit, increasing step delay from {old_delay:.1f}s to {current_delay:.1f}s"
+                    )
+                    # Wait extra time before retry
+                    await asyncio.sleep(current_delay)
+                    continue  # Retry this step
+
                 error_message = f"Failed to communicate with white agent: {str(e)}"
                 logger.error(f"[Task {task_idx}] {error_message}")
                 break
@@ -677,23 +743,25 @@ What should we do next?"""
             # Handle parsing error
             if tool == "error":
                 error_type = params.get("error_type", "unknown")
-                raw_response = params.get("raw_response", "")
+                consecutive_parse_errors += 1
                 logger.warning(
-                    f"[Task {task_idx}] Parse error ({error_type}), will retry"
+                    f"[Task {task_idx}] Parse error ({error_type}), attempt {consecutive_parse_errors}/{MAX_CONSECUTIVE_PARSE_ERRORS}"
                 )
 
-                error_feedback = f"""Your previous response could not be parsed ({error_type}).
+                # After too many consecutive parse errors, give up on this task
+                if consecutive_parse_errors >= MAX_CONSECUTIVE_PARSE_ERRORS:
+                    logger.error(
+                        f"[Task {task_idx}] Too many consecutive parse errors ({consecutive_parse_errors}), "
+                        f"marking task as failed and moving on"
+                    )
+                    error_message = f"Task failed after {consecutive_parse_errors} consecutive parse errors"
+                    break
 
-Your response was:
-{raw_response[:500]}
-
-Please ensure you:
-1. Wrap your JSON in <json></json> tags
-2. Use valid JSON format with double quotes
-3. Include all three required fields: "thought", "tool", and "params"
-4. Use one of the valid tools: click, type, select, finish
-"""
+                error_feedback = f"Your previous response could not be parsed ({error_type}). Try again."
                 continue
+            else:
+                # Reset counter on successful parse
+                consecutive_parse_errors = 0
 
             # Execute action
             try:

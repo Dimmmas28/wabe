@@ -39,7 +39,8 @@ def parse_white_agent_response(response_text: str) -> Dict[str, Any]:
         - params: Parameters for the tool (defaults to empty dict)
     """
 
-    # Try to parse JSON tags first
+    # Parse JSON with <json></json> tags ONLY
+    # Markdown code fences are NOT accepted - agents must follow format instructions
     try:
         tags = parse_tags(response_text)
         if "json" in tags:

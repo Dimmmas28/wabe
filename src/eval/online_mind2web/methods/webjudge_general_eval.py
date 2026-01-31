@@ -36,7 +36,7 @@ async def identify_key_points(task, input_image_paths, model):
                     "type": "image_url",
                     "image_url": {
                         "url": f"data:image/png;base64,{input_images_jpg_base64_str}",
-                        "detail": "high",
+                        "detail": "low",
                     },
                 }
             )
@@ -95,7 +95,7 @@ The snapshot of the web page is shown in the image."""
                     "type": "image_url",
                     "image_url": {
                         "url": f"data:image/png;base64,{input_images_jpg_base64_str}",
-                        "detail": "high",
+                        "detail": "low",
                     },
                 }
             )
@@ -120,7 +120,7 @@ The snapshot of the web page is shown in the image."""
                     "type": "image_url",
                     "image_url": {
                         "url": f"data:image/jpeg;base64,{jpg_base64_str}",
-                        "detail": "high",
+                        "detail": "low",
                     },
                 },
             ],
@@ -210,7 +210,7 @@ The potentially important snapshots of the webpage in the agent's trajectory and
                     "type": "image_url",
                     "image_url": {
                         "url": f"data:image/png;base64,{jpg_base64_str}",
-                        "detail": "high",
+                        "detail": "low",
                     },
                 }
             )
@@ -263,7 +263,7 @@ Action History:
                     "type": "image_url",
                     "image_url": {
                         "url": f"data:image/png;base64,{input_images_jpg_base64_str}",
-                        "detail": "high",
+                        "detail": "low",
                     },
                 }
             )

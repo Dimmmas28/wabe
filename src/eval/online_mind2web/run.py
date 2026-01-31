@@ -2,10 +2,17 @@ import argparse
 import asyncio
 import copy
 import json
+import logging
 import multiprocessing
 import os
+import time
 
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
+
+# Delay between tasks within a worker process (seconds)
+INTER_TASK_DELAY = 60.0
 
 from eval.online_mind2web.methods.agenttrek_eval import *
 from eval.online_mind2web.methods.automomous_eval import *
@@ -32,9 +39,14 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
             item = json.loads(item)
             already_ids.append(item["task_id"])
 
+    logger.info(f"The number of already done tasks: {len(already_ids)}")
     print(f"The number of already done tasks: {len(already_ids)}")
 
-    for task_id in task_subset:
+    for idx, task_id in enumerate(task_subset):
+        # Add delay between tasks to avoid rate limiting (skip first task)
+        if idx > 0:
+            logger.info(f"Waiting {INTER_TASK_DELAY}s before next task evaluation...")
+            time.sleep(INTER_TASK_DELAY)
         # Skip already done task
         if task_id in already_ids:
             continue
@@ -62,6 +74,7 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
             if "input_image_paths" in result:
                 input_image_paths = result["input_image_paths"]
 
+        logger.info(f"Start evaluation for task: {task_id}")
         print(f"Start evaluation for {task_description}")
         # Do the auto-eval
         if args.mode == "Autonomous_eval":
@@ -138,8 +151,16 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
         else:
             raise ValueError(f"Unknown mode: {args.mode}")
 
-        response = model.generate(messages)[0]
-        predicted_label = extract_predication(response, args.mode)
+        try:
+            response = model.generate(messages)[0]
+            predicted_label = extract_predication(response, args.mode)
+        except Exception as e:
+            logger.error(
+                f"EVALUATION FAILED for task {task_id}: {e}. "
+                "This task will not have LLM evaluation results."
+            )
+            print(f"ERROR: Evaluation failed for {task_description}: {e}")
+            continue
 
         # Store evaluation details
         evaluation_results = {"response": response, "predicted_label": predicted_label}
@@ -152,6 +173,9 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
         with lock:
             final_predicted_labels.append(predicted_label)
 
+        logger.info(
+            f"Finish evaluation for task {task_id}: predicted_label={predicted_label}"
+        )
         print(f"Finish evaluation for {task_description}")
         print("=" * 20)
         os.makedirs(args.output_path, exist_ok=True)
@@ -170,13 +194,30 @@ def process_subset(task_subset, args, final_predicted_labels, lock, model):
     auto_eval(args, task_subset, final_predicted_labels, lock, model)
 
 
-def parallel_eval(args, num_workers=60):
+def parallel_eval(args, num_workers=1):
+    """
+    Evaluate tasks in parallel with rate limit protection.
+
+    Args:
+        args: Evaluation arguments (mode, model, paths, etc.)
+        num_workers: Number of parallel worker processes (default: 5)
+                    Lower values reduce API rate limit pressure.
+
+    Returns:
+        Pass rate as a percentage (0-100)
+    """
     # Evaluate in parallel based on num of works
     task_dirs = [
         d
         for d in sorted(os.listdir(args.trajectories_dir))
         if os.path.isdir(os.path.join(args.trajectories_dir, d))
     ]
+
+    logger.info(f"Starting evaluation: {len(task_dirs)} tasks, {num_workers} workers")
+    logger.info(
+        f"Rate limit protection: {INTER_TASK_DELAY}s delay between tasks, "
+        "exponential backoff on 429 errors"
+    )
     print(f"Evaluating {len(task_dirs)} tasks in total.")
     chunk_size = len(task_dirs) // num_workers
     print(f"Chunk size {chunk_size}.")
@@ -207,10 +248,23 @@ def parallel_eval(args, num_workers=60):
             p.join()
 
         success_num = sum(final_predicted_labels)
+        evaluated_count = len(final_predicted_labels)
 
     print("Evaluation complete.")
-    success_rate = (success_num / len(task_dirs)) * 100
-    return success_rate
+    logger.info(
+        f"Evaluation complete: {evaluated_count}/{len(task_dirs)} tasks evaluated, "
+        f"{success_num} passed"
+    )
+
+    if evaluated_count < len(task_dirs):
+        logger.warning(
+            f"INCOMPLETE EVALUATION: Only {evaluated_count}/{len(task_dirs)} tasks "
+            "were evaluated. Some tasks may have failed due to rate limits or errors. "
+            "Check logs for details."
+        )
+
+    pass_rate = (success_num / len(task_dirs)) * 100 if task_dirs else 0
+    return pass_rate
 
 
 if __name__ == "__main__":

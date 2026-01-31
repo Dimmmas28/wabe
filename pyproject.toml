@@ -16,6 +16,7 @@ dependencies = [
     "langchain>=1.0.5",
     "langchain-google-genai>=3.0.2",
     "langchain-openai>=1.0.2",
+    "langgraph>=0.2.0",
     "mcp>=1.0.0",
     "pillow>=12.0.0",
     "playwright>=1.55.0",
@@ -38,7 +39,7 @@ dev-dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agentbeats", "src/shared", "src/utils"]
+packages = ["src/agentbeats", "src/shared", "src/utils", "scenarios"]
 
 [tool.isort]
 profile = "black"
