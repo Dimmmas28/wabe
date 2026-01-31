@@ -58,6 +58,10 @@ from green_agent.constants import (
 
 # Default score threshold for evaluation (matches benchmark.py default)
 EVAL_SCORE_THRESHOLD = 3
+
+# Maximum consecutive parse errors before giving up on a task
+# Prevents wasting all steps on a model that won't follow format instructions
+MAX_CONSECUTIVE_PARSE_ERRORS = 3
 from green_agent.prompts import (
     BrowserJudgePrompts,
     build_tools_prompt,
@@ -534,6 +538,7 @@ class BrowserJudge(GreenAgent):
         )
 
         error_feedback = None
+        consecutive_parse_errors = 0
 
         # Exponential backoff for step delay
         # Start with configured delay, increase on rate limit errors, decrease on success
@@ -636,11 +641,16 @@ What should we do next?"""
             # Send to white agent
             # Continue same conversation - white agent controls its own history strategy
             # (e.g., include_contents='none' for stateless, or 'default' for full history)
+            # Add timeout to prevent jobs from hanging indefinitely in CI
+            WHITE_AGENT_TIMEOUT = 300  # 5 minutes max per step
             try:
-                response_text = await tool_provider.talk_to_agent(
-                    url=white_agent_url,
-                    new_conversation=(step == 0),
-                    parts=parts,
+                response_text = await asyncio.wait_for(
+                    tool_provider.talk_to_agent(
+                        url=white_agent_url,
+                        new_conversation=(step == 0),
+                        parts=parts,
+                    ),
+                    timeout=WHITE_AGENT_TIMEOUT,
                 )
 
                 logger.info("=" * 60)
@@ -659,6 +669,14 @@ What should we do next?"""
                         f"[Task {task_idx}] Decreased step delay to {current_delay:.1f}s after {consecutive_successes} successes"
                     )
 
+            except asyncio.TimeoutError:
+                error_message = (
+                    f"White agent response timed out after {WHITE_AGENT_TIMEOUT}s"
+                )
+                logger.error(f"[Task {task_idx}] {error_message}")
+                # Don't retry on timeout - likely indicates a hung LLM call
+                break
+
             except Exception as e:
                 error_str = str(e).lower()
                 is_rate_limit = (
@@ -666,6 +684,12 @@ What should we do next?"""
                     or "resource_exhausted" in error_str
                     or "too many requests" in error_str
                 )
+                is_timeout = "timeout" in error_str or isinstance(e, TimeoutError)
+
+                if is_timeout:
+                    error_message = f"White agent timed out: {str(e)}"
+                    logger.error(f"[Task {task_idx}] {error_message}")
+                    break
 
                 if is_rate_limit:
                     # Rate limit hit - increase delay exponentially
@@ -719,15 +743,25 @@ What should we do next?"""
             # Handle parsing error
             if tool == "error":
                 error_type = params.get("error_type", "unknown")
-                raw_response = params.get("raw_response", "")
+                consecutive_parse_errors += 1
                 logger.warning(
-                    f"[Task {task_idx}] Parse error ({error_type}), will retry"
+                    f"[Task {task_idx}] Parse error ({error_type}), attempt {consecutive_parse_errors}/{MAX_CONSECUTIVE_PARSE_ERRORS}"
                 )
 
-                error_feedback = f"""Your previous response could not be parsed ({error_type}).
+                # After too many consecutive parse errors, give up on this task
+                if consecutive_parse_errors >= MAX_CONSECUTIVE_PARSE_ERRORS:
+                    logger.error(
+                        f"[Task {task_idx}] Too many consecutive parse errors ({consecutive_parse_errors}), "
+                        f"marking task as failed and moving on"
+                    )
+                    error_message = f"Task failed after {consecutive_parse_errors} consecutive parse errors"
+                    break
 
-Try again."""
+                error_feedback = f"Your previous response could not be parsed ({error_type}). Try again."
                 continue
+            else:
+                # Reset counter on successful parse
+                consecutive_parse_errors = 0
 
             # Execute action
             try:

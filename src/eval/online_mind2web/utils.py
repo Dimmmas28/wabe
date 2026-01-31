@@ -125,7 +125,7 @@ class OpenaiEngine:
             messages: The messages to send to the model
             max_new_tokens: Maximum tokens in response
             temperature: Sampling temperature
-            model: Model name (currently ignored, uses gemini-2.5-flash)
+            model: Model name (optional, defaults to instance model from constructor)
             max_retries: Maximum number of retry attempts on rate limit
             base_delay: Base delay in seconds for exponential backoff
             max_delay: Maximum delay between retries
@@ -138,8 +138,10 @@ class OpenaiEngine:
         if self.request_interval > 0:
             time.sleep(self.request_interval)
 
+        # Use passed model or fall back to instance model
+        model_name = model if model is not None else self.model
         llm = self.client(
-            model="gemini-2.5-flash",
+            model=model_name,
             temperature=temperature,
             top_p=0.0,
             top_k=1,

@@ -1,7 +1,7 @@
 import os
 
 MAX_HTML_CONTEXT_LENGTH = 40000  # Increased from 25K for more page context
-MAX_PARALLEL_TASKS = int(os.getenv("MAX_PARALLEL_TASKS", "2"))  # Increased from 1 to 2
+MAX_PARALLEL_TASKS = int(os.getenv("MAX_PARALLEL_TASKS", "1"))  # Increased from 1 to 2
 
 TASK_RESULT_OUTPUT_DIR = ".output/results"
 TASK_RESULT_FILE_NAME = "result"

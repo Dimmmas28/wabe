@@ -25,9 +25,10 @@ WABE evaluates how well AI agents can navigate websites and complete tasks like 
 **Green Agent (Judge):**
 - Provides the task description **once** at the start
 - Sends current page snapshot and screenshot on each step
+- Provides available tools and response format requirements with each message
 - Executes actions returned by the challenger
 - Evaluates final results
-- Does NOT remind the challenger of the task, format, or history
+- Does NOT remind the challenger of the task or history
 
 **Purple Agent (Challenger):**
 - Remembers the goal from the first message
@@ -141,6 +142,28 @@ docker pull ghcr.io/hjerpe/wabe-purple-adk_default:latest
 docker pull ghcr.io/hjerpe/wabe-purple-reliability:latest
 ```
 
+### Building All Images
+
+Build both green and purple agent images with a single command:
+
+```bash
+# Build all images (green + all purple agents)
+./scripts/build-all-images.sh
+
+# Build and push all to registry
+./scripts/build-all-images.sh --push
+
+# Build with custom models (useful if rate-limited on default model)
+./scripts/build-all-images.sh --model gemini-2.0-flash --eval-model gemini-2.0-flash --push
+
+# Build only green or only purple agents
+./scripts/build-all-images.sh --green-only --push
+./scripts/build-all-images.sh --purple-only --push
+
+# Build green + specific purple agent
+./scripts/build-all-images.sh react_adk --push
+```
+
 ### Building Green Agent Image
 
 The green agent (browser judge) runs evaluation and controls the browser:
@@ -148,6 +171,9 @@ The green agent (browser judge) runs evaluation and controls the browser:
 ```bash
 # Build image
 ./scripts/build-green-image.sh
+
+# Build with custom eval model
+./scripts/build-green-image.sh --eval-model gemini-2.0-flash
 
 # Build and push to registry
 ./scripts/build-green-image.sh --push
@@ -167,11 +193,26 @@ Purple agents are the participants being evaluated:
 # Build specific agent
 ./scripts/build-purple-images.sh reliability
 
+# Build with custom model (e.g., if hitting rate limits on gemini-2.5-flash)
+./scripts/build-purple-images.sh --model gemini-2.0-flash
+
 # Build and push to registry
 ./scripts/build-purple-images.sh --push
 ```
 
 Any `.py` file in `scenarios/web_browser/agents/` is automatically discoverable and buildable.
+
+### Model Options
+
+By default, agents use `gemini-2.5-flash`. If you hit rate limits (429 RESOURCE_EXHAUSTED), you can use an alternative model:
+
+| Model | Use Case |
+|-------|----------|
+| `gemini-2.5-flash` | Default, best quality |
+| `gemini-2.0-flash` | Alternative if rate-limited on 2.5 |
+| `gemini-2.5-pro` | Higher quality, slower, more expensive |
+
+**Note:** The `reliability` agent doesn't use an LLM (deterministic replay), so `--model` has no effect on it.
 
 ## Architecture
 

@@ -39,37 +39,21 @@ from scenarios.web_browser.agents import (
 
 logger = logging.getLogger(__name__)
 
-REACT_INSTRUCTION = """## OUTPUT FORMAT (MANDATORY)
+REACT_INSTRUCTION = """You are a ReAct (Reason + Act) web automation agent.
 
-EVERY response MUST use this EXACT structure:
+## CRITICAL: READ THE USER MESSAGE CAREFULLY
 
-<json>
-{"thought": "your reasoning here", "tool": "tool_name", "params": {"key": "value"}}
-</json>
+The user message contains:
+1. TASK DESCRIPTION - Your goal. Remember it throughout the conversation.
+2. RESPONSE FORMAT - Follow it EXACTLY. Do not invent your own format.
+3. AVAILABLE TOOLS - Use only these tools with correct parameters.
+4. PAGE SNAPSHOT - Current state of the webpage.
 
-FORMAT RULES:
-- First characters must be: <json>
-- Last characters must be: </json>
-- NO markdown fences, NO text outside tags
-- Valid JSON with double quotes
-
----
-
-## YOUR ROLE
-
-You are a ReAct (Reason + Act) web automation agent.
-
-You will receive a TASK DESCRIPTION in the first message. You must:
-1. Remember the goal throughout the conversation
-2. Track your own action history mentally
-3. Output the correct format on EVERY response
-4. Decide when the task is complete or when to give up
-
-The judge only provides page snapshots. You must be self-sufficient.
-
----
+You must be SELF-SUFFICIENT. The judge will not remind you of the task or format.
 
 ## METHODOLOGY
+
+On each step, follow this reasoning process:
 
 ### OBSERVE
 - Study the CURRENT PAGE SNAPSHOT - what elements exist?
@@ -78,7 +62,7 @@ The judge only provides page snapshots. You must be self-sufficient.
 - Any blockers (CAPTCHAs, login walls, access denied)?
 
 ### THINK
-- What is my goal? (from first message)
+- What is my goal? (from the TASK in first message)
 - What progress has been made?
 - What is the most direct next action?
 
@@ -90,33 +74,7 @@ Before acting, check:
 If YES: try a COMPLETELY DIFFERENT approach or call "browser_close".
 
 ### ACT
-Choose ONE action. Output in required format.
-
----
-
-## EXAMPLES
-
-Typing in a search box:
-<json>
-{"thought": "I see a search box, I will type the query", "tool": "browser_type", "params": {"element": "Search", "ref": "e29", "text": "Las Vegas"}}
-</json>
-
-Clicking a button:
-<json>
-{"thought": "I need to click the submit button", "tool": "browser_click", "params": {"element": "Submit", "ref": "e45"}}
-</json>
-
-Task complete:
-<json>
-{"thought": "The requested information is now visible", "tool": "finish", "params": {}}
-</json>
-
-Giving up (blocked):
-<json>
-{"thought": "CAPTCHA detected, cannot proceed", "tool": "browser_close", "params": {}}
-</json>
-
----
+Choose ONE action. Output using the EXACT format specified in the user message.
 
 ## STOPPING CONDITIONS
 
@@ -129,15 +87,6 @@ Call "browser_close" when:
 - Access denied / 403 / regional block
 - Login wall that cannot be bypassed
 - Same action failed 3+ times
-
----
-
-## BEFORE RESPONDING
-
-Verify your output:
-1. Starts with <json>
-2. Ends with </json>
-3. Valid JSON inside
 """
 
 
