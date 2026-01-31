@@ -286,3 +286,138 @@ class TestMCPBrowserClientToolCalls:
 
         with pytest.raises(RuntimeError, match="Validation failed"):
             await client.call_tool("browser_navigate")  # Missing required url
+
+
+class TestBrowserTakeScreenshotValidation:
+    """
+    Regression tests for browser_take_screenshot validation.
+
+    These tests ensure the 'type' parameter is correctly passed through kwargs
+    to prevent the validation error: "Missing required field: 'type'"
+
+    See: Investigation of screenshot failures in Docker/leaderboard environment
+    """
+
+    @pytest.mark.asyncio
+    async def test_screenshot_with_type_kwarg_passes_validation(self, client):
+        """Test that browser_take_screenshot with type='jpeg' passes validation."""
+        client._initialized = True
+        client._tools_by_name = {
+            "browser_take_screenshot": {
+                "name": "browser_take_screenshot",
+                "description": "Take a screenshot of the current page.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "description": "Image format for the screenshot. Default is png.",
+                        },
+                        "filename": {"type": "string"},
+                        "element": {"type": "string"},
+                        "ref": {"type": "string"},
+                        "fullPage": {"type": "boolean"},
+                    },
+                    "required": ["type"],
+                },
+            }
+        }
+
+        # Mock _call_tool to avoid actual MCP server call
+        expected_result = {"content": [{"type": "image", "data": "base64data"}]}
+        with patch.object(
+            client, "_call_tool", return_value=expected_result
+        ) as mock_call:
+            # This is the exact call pattern used in browser_agent.py
+            screenshot_params = {"type": "jpeg"}
+            result = await client.call_tool(
+                "browser_take_screenshot", **screenshot_params
+            )
+
+            assert result == expected_result
+            mock_call.assert_called_once_with(
+                "browser_take_screenshot", {"type": "jpeg"}
+            )
+
+    @pytest.mark.asyncio
+    async def test_screenshot_with_direct_kwarg_passes_validation(self, client):
+        """Test that direct type='jpeg' kwarg also passes validation."""
+        client._initialized = True
+        client._tools_by_name = {
+            "browser_take_screenshot": {
+                "name": "browser_take_screenshot",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"type": {"type": "string"}},
+                    "required": ["type"],
+                },
+            }
+        }
+
+        expected_result = {"content": [{"type": "image", "data": "base64data"}]}
+        with patch.object(
+            client, "_call_tool", return_value=expected_result
+        ) as mock_call:
+            # Direct kwarg style
+            result = await client.call_tool("browser_take_screenshot", type="jpeg")
+
+            assert result == expected_result
+            mock_call.assert_called_once_with(
+                "browser_take_screenshot", {"type": "jpeg"}
+            )
+
+    @pytest.mark.asyncio
+    async def test_screenshot_without_type_fails_validation(self, client):
+        """Test that browser_take_screenshot without type fails validation."""
+        client._initialized = True
+        client._tools_by_name = {
+            "browser_take_screenshot": {
+                "name": "browser_take_screenshot",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"type": {"type": "string"}},
+                    "required": ["type"],
+                },
+            }
+        }
+
+        with pytest.raises(RuntimeError, match="Missing required field: 'type'"):
+            await client.call_tool("browser_take_screenshot")
+
+    def test_validate_screenshot_args_with_type(self, client):
+        """Test _validate_arguments directly for screenshot with type."""
+        client._tools_by_name = {
+            "browser_take_screenshot": {
+                "name": "browser_take_screenshot",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"type": {"type": "string"}},
+                    "required": ["type"],
+                },
+            }
+        }
+
+        is_valid, error = client._validate_arguments(
+            "browser_take_screenshot", {"type": "jpeg"}
+        )
+
+        assert is_valid is True
+        assert error is None
+
+    def test_validate_screenshot_args_without_type(self, client):
+        """Test _validate_arguments directly for screenshot without type."""
+        client._tools_by_name = {
+            "browser_take_screenshot": {
+                "name": "browser_take_screenshot",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"type": {"type": "string"}},
+                    "required": ["type"],
+                },
+            }
+        }
+
+        is_valid, error = client._validate_arguments("browser_take_screenshot", {})
+
+        assert is_valid is False
+        assert "Missing required field: 'type'" in error

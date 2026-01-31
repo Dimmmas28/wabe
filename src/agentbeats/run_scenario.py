@@ -161,6 +161,18 @@ def main():
         action="store_true",
         help="Start agent servers only without running evaluation",
     )
+    parser.add_argument(
+        "--purple-model",
+        type=str,
+        default=None,
+        help="Model for purple agent (default: gemini-2.5-flash)",
+    )
+    parser.add_argument(
+        "--eval-model",
+        type=str,
+        default=None,
+        help="Model for green agent evaluation (default: gemini-2.5-flash)",
+    )
     args = parser.parse_args()
 
     cfg = parse_toml(args.scenario)
@@ -174,6 +186,14 @@ def main():
     parent_bin = str(Path(sys.executable).parent)
     base_env = os.environ.copy()
     base_env["PATH"] = parent_bin + os.pathsep + base_env.get("PATH", "")
+
+    # Set model environment variables if specified via CLI
+    if args.purple_model:
+        base_env["PURPLE_AGENT_MODEL"] = args.purple_model
+        print(f"Purple agent model: {args.purple_model}")
+    if args.eval_model:
+        base_env["EVAL_MODEL"] = args.eval_model
+        print(f"Eval model: {args.eval_model}")
 
     procs = []
     log_files = []

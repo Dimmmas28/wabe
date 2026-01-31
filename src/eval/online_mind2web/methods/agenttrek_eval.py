@@ -56,7 +56,7 @@ The last snapshot of the web page is shown in the image."""
                     "type": "image_url",
                     "image_url": {
                         "url": f"data:image/jpeg;base64,{jpg_base64_str}",
-                        "detail": "high",
+                        "detail": "low",
                     },
                 },
             ],

@@ -101,8 +101,8 @@ class RetryGemini(BaseLlm):
 
     model: str
     max_retries: int = 5
-    base_delay: float = 2.0
-    max_delay: float = 60.0
+    base_delay: float = 60.0
+    max_delay: float = 120.0
     jitter: float = 0.5
     _inner: Gemini | None = None
 

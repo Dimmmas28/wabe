@@ -81,7 +81,7 @@ The snapshot of the web page is shown in the image."""
                     "type": "image_url",
                     "image_url": {
                         "url": f"data:image/jpeg;base64,{jpg_base64_str}",
-                        "detail": "high",
+                        "detail": "low",
                     },
                 },
             ],
@@ -173,7 +173,7 @@ The potentially important snapshots of the webpage in the agent's trajectory and
                     "type": "image_url",
                     "image_url": {
                         "url": f"data:image/png;base64,{jpg_base64_str}",
-                        "detail": "high",
+                        "detail": "low",
                     },
                 }
             )

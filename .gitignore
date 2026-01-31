@@ -21,3 +21,10 @@ FEATURES.json
 specs/
 data/
 opencode.jsonc
+
+# Runtime output files
+action_logs.txt
+*.json
+!package.json
+!package-lock.json
+!pyproject.json

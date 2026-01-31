@@ -5,12 +5,22 @@ This agent receives browser state (accessibility snapshot, screenshot, task desc
 from the green agent and returns navigation actions (click, type, select, etc.).
 
 Uses Google ADK Agent with Gemini Flash model for fast, deterministic responses.
+
+Environment Variables:
+    PURPLE_AGENT_MODEL: Model to use (default: gemini-2.5-flash)
+                        Options: gemini-2.5-flash, gemini-2.5-pro
 """
+
+import os
 
 import uvicorn
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Model configuration - can be overridden via environment variable
+DEFAULT_MODEL = "gemini-2.5-flash"
+AGENT_MODEL = os.getenv("PURPLE_AGENT_MODEL", DEFAULT_MODEL)
 
 from google.adk.a2a.utils.agent_to_a2a import to_a2a
 from google.adk.agents import Agent
@@ -31,8 +41,10 @@ def main():
     args = parser.parse_args()
 
     # Create model with retry wrapper for rate limit handling
+    # Model can be configured via PURPLE_AGENT_MODEL environment variable
+    print(f"Using model: {AGENT_MODEL}")
     model = RetryGemini(
-        model="gemini-2.5-flash",
+        model=AGENT_MODEL,
         max_retries=5,
         base_delay=2.0,
         max_delay=60.0,

@@ -10,10 +10,15 @@ The agent follows a think->act->observe loop:
 3. Observe: Process results and update state
 
 Uses ADK BaseAgent pattern for compatibility with to_a2a() and Docker builds.
+
+Environment Variables:
+    PURPLE_AGENT_MODEL: Model to use (default: gemini-2.5-flash)
+                        Options: gemini-2.5-flash, gemini-2.5-pro
 """
 
 import json
 import logging
+import os
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -28,6 +33,10 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 load_dotenv()
+
+# Model configuration - can be overridden via environment variable
+DEFAULT_MODEL = "gemini-2.5-flash"
+AGENT_MODEL = os.getenv("PURPLE_AGENT_MODEL", DEFAULT_MODEL)
 
 from scenarios.web_browser.agents import create_agent_card, create_base_arg_parser
 
@@ -180,7 +189,7 @@ class LangGraphReActAgent(BaseAgent):
         Returns dict with 'thought', 'tool', 'params' keys.
         """
         llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+            model=AGENT_MODEL,
             temperature=0.0,
             top_p=0.95,
         )
@@ -280,6 +289,7 @@ def main() -> None:
     )
 
     a2a_app = to_a2a(agent, agent_card=agent_card)
+    print(f"Using model: {AGENT_MODEL}")
     print(f"Starting white agent (langgraph) on {args.host}:{args.port}")
     uvicorn.run(a2a_app, host=args.host, port=args.port)
 

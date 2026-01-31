@@ -273,8 +273,13 @@ class BrowserAgent:
             return None
 
         try:
+            # Use explicit dict spread to ensure kwargs are passed correctly
+            # This addresses a potential issue where kwargs may not be populated
+            # correctly in certain Python/asyncio environments (see issue debugging)
+            # Using jpeg for smaller file size and faster transfer
+            screenshot_params = {"type": "jpeg"}
             result = await self.mcp_client.call_tool(
-                "browser_take_screenshot", type="png"
+                "browser_take_screenshot", **screenshot_params
             )
 
             # Extract base64 data from result
@@ -409,8 +414,22 @@ class BrowserAgent:
         try:
             result = await self.mcp_client.call_tool("browser_snapshot")
             # Extract snapshot text from result
-            if isinstance(result, dict) and "snapshot" in result:
-                return result["snapshot"]
+            # MCP tools return content in various formats:
+            # 1. {"content": [{"type": "text", "text": "..."}]} - MCP standard
+            # 2. {"snapshot": "..."} - legacy format
+            # 3. str - direct string response
+            if isinstance(result, dict):
+                # Check for MCP content array format (standard)
+                if "content" in result and isinstance(result["content"], list):
+                    for item in result["content"]:
+                        if isinstance(item, dict) and item.get("type") == "text":
+                            return item.get("text", "")
+                # Check for legacy snapshot key
+                if "snapshot" in result:
+                    return result["snapshot"]
+                # Fallback: stringify the dict
+                logger.debug(f"Snapshot result keys: {result.keys()}")
+                return str(result)
             elif isinstance(result, str):
                 return result
             else:

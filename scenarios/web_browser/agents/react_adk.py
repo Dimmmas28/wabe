@@ -5,15 +5,30 @@ This agent receives browser state (accessibility snapshot, screenshot, task desc
 from the green agent and returns navigation actions (click, type, select, etc.).
 
 Uses Google ADK Agent with Gemini Flash model and Observe→Think→Act reasoning methodology.
+
+Environment Variables:
+    PURPLE_AGENT_MODEL: Model to use (default: gemini-2.5-flash)
+                        Options: gemini-2.5-flash, gemini-2.5-pro
 """
+
+import logging
+import os
+from typing import Optional
 
 import uvicorn
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# Model configuration - can be overridden via environment variable
+DEFAULT_MODEL = "gemini-2.5-flash"
+AGENT_MODEL = os.getenv("PURPLE_AGENT_MODEL", DEFAULT_MODEL)
+
 from google.adk.a2a.utils.agent_to_a2a import to_a2a
 from google.adk.agents import Agent
+from google.adk.agents.callback_context import CallbackContext
+from google.adk.models.llm_request import LlmRequest
+from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 
 from scenarios.web_browser.agents import (
@@ -22,40 +37,175 @@ from scenarios.web_browser.agents import (
     create_base_arg_parser,
 )
 
-REACT_INSTRUCTION = """You are a ReAct (Reason + Act) web automation agent.
+logger = logging.getLogger(__name__)
 
-For each step, follow this methodology:
+REACT_INSTRUCTION = """## OUTPUT FORMAT (MANDATORY)
 
-OBSERVE: What do you see on the current page?
-- Identify key interactive elements relevant to the task
-- Note the current state (forms, buttons, links, inputs)
-- Recognize what has changed since the last action
-- Check for blockers: login walls, CAPTCHAs, access denied pages
+EVERY response MUST use this EXACT structure:
 
-THINK: What action will make progress toward the goal?
-- Analyze which element to interact with
-- Consider the task requirements and current page state
-- Choose the most direct action to advance
-- Detect if you are stuck in a loop (repeating similar actions without progress)
+<json>
+{"thought": "your reasoning here", "tool": "tool_name", "params": {"key": "value"}}
+</json>
 
-ACT: Execute one precise action.
+FORMAT RULES:
+- First characters must be: <json>
+- Last characters must be: </json>
+- NO markdown fences, NO text outside tags
+- Valid JSON with double quotes
 
-IMPORTANT - Recognize when to stop:
-If you encounter ANY of these blockers, call "browser_close" immediately:
-- CAPTCHA or reCAPTCHA challenges (cannot be solved programmatically)
-- Login/sign-in walls that repeatedly reappear after closing
-- Access denied (403) or authentication required pages
-- Repeated failed attempts (3+ tries) at the same action with no progress
-- Site requires account creation to proceed
+---
 
-Do NOT:
-- Keep trying to solve CAPTCHAs
-- Navigate to different websites to work around login walls
-- Repeatedly close the same popup if it keeps reappearing
+## YOUR ROLE
 
-When blocked, set your thought to explain why the task cannot be completed (e.g., "Site requires login which cannot be bypassed") and call browser_close.
+You are a ReAct (Reason + Act) web automation agent.
 
-Write your observation and reasoning in the "thought" field. Follow the response format specified in the user message."""
+You will receive a TASK DESCRIPTION in the first message. You must:
+1. Remember the goal throughout the conversation
+2. Track your own action history mentally
+3. Output the correct format on EVERY response
+4. Decide when the task is complete or when to give up
+
+The judge only provides page snapshots. You must be self-sufficient.
+
+---
+
+## METHODOLOGY
+
+### OBSERVE
+- Study the CURRENT PAGE SNAPSHOT - what elements exist?
+- Find interactive elements with [ref=...] tags
+- Has the page changed since your last action?
+- Any blockers (CAPTCHAs, login walls, access denied)?
+
+### THINK
+- What is my goal? (from first message)
+- What progress has been made?
+- What is the most direct next action?
+
+### LOOP DETECTION
+Before acting, check:
+- Have I done this EXACT action before?
+- Have I tried this approach 2+ times without success?
+
+If YES: try a COMPLETELY DIFFERENT approach or call "browser_close".
+
+### ACT
+Choose ONE action. Output in required format.
+
+---
+
+## EXAMPLES
+
+Typing in a search box:
+<json>
+{"thought": "I see a search box, I will type the query", "tool": "browser_type", "params": {"element": "Search", "ref": "e29", "text": "Las Vegas"}}
+</json>
+
+Clicking a button:
+<json>
+{"thought": "I need to click the submit button", "tool": "browser_click", "params": {"element": "Submit", "ref": "e45"}}
+</json>
+
+Task complete:
+<json>
+{"thought": "The requested information is now visible", "tool": "finish", "params": {}}
+</json>
+
+Giving up (blocked):
+<json>
+{"thought": "CAPTCHA detected, cannot proceed", "tool": "browser_close", "params": {}}
+</json>
+
+---
+
+## STOPPING CONDITIONS
+
+Call "finish" when:
+- Task objective is visibly achieved
+- Requested information is displayed
+
+Call "browser_close" when:
+- CAPTCHA/reCAPTCHA appears
+- Access denied / 403 / regional block
+- Login wall that cannot be bypassed
+- Same action failed 3+ times
+
+---
+
+## BEFORE RESPONDING
+
+Verify your output:
+1. Starts with <json>
+2. Ends with </json>
+3. Valid JSON inside
+"""
+
+
+def strip_images_from_history(
+    callback_context: CallbackContext, llm_request: LlmRequest
+) -> Optional[LlmResponse]:
+    """
+    Before-model callback that strips images from historical messages to reduce token usage.
+
+    Problem: With conversation history, each step accumulates ~30K tokens. By step 20,
+    we're sending 600K+ tokens per request, causing TPM quota exhaustion.
+
+    Solution: Keep images only in the LAST user message (current state). Historical
+    messages are summarized as "[image was sent]" - the agent still sees what actions
+    it took but doesn't re-process old screenshots.
+
+    This reduces token growth from O(n * image_size) to O(n * text_only + image_size).
+
+    Args:
+        callback_context: Callback context (unused)
+        llm_request: The LLM request with conversation contents
+
+    Returns:
+        None to continue with modified request, or LlmResponse to skip model call
+    """
+    # Note: ADK calls this with keyword arguments, but we define positional params
+    # to satisfy the type checker. Both work since Python allows either.
+    request = llm_request  # Alias for readability
+    if not request.contents:
+        return None
+
+    # Find the last user message index
+    last_user_idx = -1
+    for i, content in enumerate(request.contents):
+        if content.role == "user":
+            last_user_idx = i
+
+    # Strip images from all messages except the last user message
+    for i, content in enumerate(request.contents):
+        if i == last_user_idx:
+            # Keep the last user message intact (current screenshot needed)
+            continue
+
+        if not content.parts:
+            continue
+
+        # Filter out image parts, replace with placeholder text
+        new_parts = []
+        had_image = False
+        for part in content.parts:
+            # Check if this is an image part (inline_data with image mime type)
+            if hasattr(part, "inline_data") and part.inline_data:
+                if (
+                    hasattr(part.inline_data, "mime_type")
+                    and part.inline_data.mime_type
+                ):
+                    if part.inline_data.mime_type.startswith("image/"):
+                        had_image = True
+                        continue  # Skip this image part
+            new_parts.append(part)
+
+        # Add a placeholder if we removed images
+        if had_image:
+            new_parts.append(types.Part(text="[screenshot was shown]"))
+
+        content.parts = new_parts
+
+    return None  # Continue with modified request
 
 
 def main():
@@ -66,19 +216,25 @@ def main():
     args = parser.parse_args()
 
     # Create model with retry wrapper for rate limit handling
+    # Model can be configured via PURPLE_AGENT_MODEL environment variable
+    # Using 60s base delay to properly wait for TPM quota reset (1 minute window)
+    print(f"Using model: {AGENT_MODEL}")
     model = RetryGemini(
-        model="gemini-2.5-flash",
+        model=AGENT_MODEL,
         max_retries=5,
-        base_delay=2.0,
-        max_delay=60.0,
+        base_delay=60.0,
+        max_delay=120.0,
     )
 
     # Create the browser navigation agent
+    # Uses before_model_callback to strip images from historical messages, reducing TPM usage.
+    # The agent keeps full conversation history for context but only processes the current screenshot.
     root_agent = Agent(
         name="browser_agent_react",
         model=model,
         description="A ReAct web browser agent that uses Observe→Think→Act reasoning.",
         instruction=REACT_INSTRUCTION,
+        before_model_callback=strip_images_from_history,  # Strips old screenshots to save tokens
         generate_content_config=types.GenerateContentConfig(
             temperature=0.0,
             top_p=0.0,

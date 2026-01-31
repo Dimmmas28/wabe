@@ -44,6 +44,10 @@ ENV GOOGLE_GENAI_USE_VERTEXAI=FALSE
 ARG AGENT_TYPE=""
 ENV AGENT_TYPE=${AGENT_TYPE}
 
+# Allow baking model at build time for purple agent
+ARG PURPLE_MODEL="gemini-2.5-flash"
+ENV PURPLE_AGENT_MODEL=${PURPLE_MODEL}
+
 # Expose port for purple agent (default 9019)
 EXPOSE 9019
 

@@ -21,14 +21,16 @@ Options:
   -l, --list    List available agents
   --push        Push images to registry after building
   --registry    Registry prefix (default: ghcr.io/hjerpe)
+  --model       Model for purple agent (default: gemini-2.5-flash)
   -h, --help    Show this help message
 
 Examples:
-  ./scripts/build-purple-images.sh --list             # List available agents
-  ./scripts/build-purple-images.sh                    # Build all agents
-  ./scripts/build-purple-images.sh reliability        # Build reliability agent
-  ./scripts/build-purple-images.sh --push             # Build all and push
-  ./scripts/build-purple-images.sh reliability --push # Build and push one
+  ./scripts/build-purple-images.sh --list                    # List available agents
+  ./scripts/build-purple-images.sh                           # Build all agents
+  ./scripts/build-purple-images.sh reliability               # Build reliability agent
+  ./scripts/build-purple-images.sh --model gemini-2.5-flash  # Custom model
+  ./scripts/build-purple-images.sh --push                    # Build all and push
+  ./scripts/build-purple-images.sh react_adk --model gemini-2.5-pro --push
 
 Images produced:
   wabe-purple-adk_default
@@ -54,6 +56,7 @@ list_agents() {
 PUSH=false
 REGISTRY="$DEFAULT_REGISTRY"
 AGENT=""
+PURPLE_MODEL=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -63,6 +66,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --registry)
             REGISTRY="$2"
+            shift 2
+            ;;
+        --model)
+            PURPLE_MODEL="$2"
             shift 2
             ;;
         -h|--help)
@@ -89,9 +96,18 @@ build_agent() {
     local image_name="${IMAGE_BASE}-${agent}"
     local full_tag="${REGISTRY}/${image_name}:latest"
     
+    # Build docker build args
+    local build_args="--build-arg AGENT_TYPE=$agent"
+    if [ -n "$PURPLE_MODEL" ]; then
+        build_args="$build_args --build-arg PURPLE_MODEL=$PURPLE_MODEL"
+    fi
+    
     echo "Building ${image_name}..."
+    if [ -n "$PURPLE_MODEL" ]; then
+        echo "Using model: $PURPLE_MODEL"
+    fi
     if ! docker build \
-        --build-arg AGENT_TYPE="$agent" \
+        $build_args \
         -t "$image_name" \
         -t "$full_tag" \
         -f Dockerfile.purple .; then

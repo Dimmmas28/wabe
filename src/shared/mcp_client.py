@@ -515,9 +515,19 @@ class MCPBrowserClient:
                 "Client must be initialized before calling tools. Call start() first."
             )
 
+        # Debug logging to diagnose kwargs issues in Docker environment
+        logger.debug(
+            f"call_tool received: tool_name={tool_name}, kwargs={kwargs}, "
+            f"kwargs_type={type(kwargs).__name__}, kwargs_keys={list(kwargs.keys())}"
+        )
+
         # Validate arguments against tool schema
         is_valid, error_msg = self._validate_arguments(tool_name, kwargs)
         if not is_valid:
+            # Additional debug info on validation failure
+            logger.error(
+                f"Validation failed - tool: {tool_name}, kwargs: {kwargs}, error: {error_msg}"
+            )
             raise RuntimeError(f"Validation failed for '{tool_name}': {error_msg}")
 
         logger.info(f"Calling tool '{tool_name}' with args: {kwargs}")

@@ -535,16 +535,23 @@ class BrowserJudge(GreenAgent):
 
         error_feedback = None
 
+        # Exponential backoff for step delay
+        # Start with configured delay, increase on rate limit errors, decrease on success
+        current_delay = step_delay
+        min_delay = step_delay  # Don't go below configured minimum
+        max_delay = step_delay * 8  # Cap at 8x the base delay
+        consecutive_successes = 0
+
         for step in range(max_steps):
             step_count = step + 1
             logger.info(f"[Task {task_idx}] Starting step {step_count}/{max_steps}")
 
             # Add delay between steps to avoid rate limiting (except first step)
-            if step > 0 and step_delay > 0:
+            if step > 0 and current_delay > 0:
                 logger.info(
-                    f"[Task {task_idx}] Waiting {step_delay}s before next step..."
+                    f"[Task {task_idx}] Waiting {current_delay:.1f}s before next step..."
                 )
-                await asyncio.sleep(step_delay)
+                await asyncio.sleep(current_delay)
 
             await updater.update_status(
                 TaskState.working,
@@ -627,6 +634,8 @@ What should we do next?"""
                 Path(debug_snapshot_path).write_text(snapshot)
 
             # Send to white agent
+            # Continue same conversation - white agent controls its own history strategy
+            # (e.g., include_contents='none' for stateless, or 'default' for full history)
             try:
                 response_text = await tool_provider.talk_to_agent(
                     url=white_agent_url,
@@ -642,7 +651,34 @@ What should we do next?"""
                 logger.info(f"Full response:\n{response_text}")
                 logger.info("=" * 60)
 
+                # Success - gradually decrease delay (but not below minimum)
+                consecutive_successes += 1
+                if consecutive_successes >= 3 and current_delay > min_delay:
+                    current_delay = max(min_delay, current_delay * 0.8)
+                    logger.info(
+                        f"[Task {task_idx}] Decreased step delay to {current_delay:.1f}s after {consecutive_successes} successes"
+                    )
+
             except Exception as e:
+                error_str = str(e).lower()
+                is_rate_limit = (
+                    "429" in error_str
+                    or "resource_exhausted" in error_str
+                    or "too many requests" in error_str
+                )
+
+                if is_rate_limit:
+                    # Rate limit hit - increase delay exponentially
+                    consecutive_successes = 0
+                    old_delay = current_delay
+                    current_delay = min(max_delay, current_delay * 2)
+                    logger.warning(
+                        f"[Task {task_idx}] Rate limit hit, increasing step delay from {old_delay:.1f}s to {current_delay:.1f}s"
+                    )
+                    # Wait extra time before retry
+                    await asyncio.sleep(current_delay)
+                    continue  # Retry this step
+
                 error_message = f"Failed to communicate with white agent: {str(e)}"
                 logger.error(f"[Task {task_idx}] {error_message}")
                 break
@@ -690,15 +726,7 @@ What should we do next?"""
 
                 error_feedback = f"""Your previous response could not be parsed ({error_type}).
 
-Your response was:
-{raw_response[:500]}
-
-Please ensure you:
-1. Wrap your JSON in <json></json> tags
-2. Use valid JSON format with double quotes
-3. Include all three required fields: "thought", "tool", and "params"
-4. Use one of the valid tools: click, type, select, finish
-"""
+Try again."""
                 continue
 
             # Execute action

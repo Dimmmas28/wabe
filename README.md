@@ -16,9 +16,25 @@ WABE evaluates how well AI agents can navigate websites and complete tasks like 
 
 | Term | Role | Description |
 |------|------|-------------|
-| **Green Agent** | Assessor | Controls the browser, sends tasks, evaluates results |
-| **Purple Agent** | Participant | Your agent being evaluated - receives tasks and returns actions |
+| **Green Agent** | Judge | The benchmark/evaluator. Controls the browser, provides page state, scores results. Does NOT help the challenger. |
+| **Purple Agent** | Challenger | Your agent being evaluated. Receives a task once, must remember the goal, track its own progress, and maintain correct response format throughout. |
 | **AgentBeats** | Platform | Leaderboard at [agentbeats.dev](https://agentbeats.dev) for competitive evaluation |
+
+### Judge vs Challenger Responsibilities
+
+**Green Agent (Judge):**
+- Provides the task description **once** at the start
+- Sends current page snapshot and screenshot on each step
+- Executes actions returned by the challenger
+- Evaluates final results
+- Does NOT remind the challenger of the task, format, or history
+
+**Purple Agent (Challenger):**
+- Remembers the goal from the first message
+- Tracks its own action history mentally
+- Maintains correct response format (`<json></json>` tags) on EVERY response
+- Decides when the task is complete or when to give up
+- Must be **self-sufficient** - the judge won't hand-hold
 
 ## Quick Start
 
@@ -125,7 +141,21 @@ docker pull ghcr.io/hjerpe/wabe-purple-adk_default:latest
 docker pull ghcr.io/hjerpe/wabe-purple-reliability:latest
 ```
 
+### Building Green Agent Image
+
+The green agent (browser judge) runs evaluation and controls the browser:
+
+```bash
+# Build image
+./scripts/build-green-image.sh
+
+# Build and push to registry
+./scripts/build-green-image.sh --push
+```
+
 ### Building Purple Agent Images
+
+Purple agents are the participants being evaluated:
 
 ```bash
 # List available agents
@@ -167,7 +197,7 @@ Any `.py` file in `scenarios/web_browser/agents/` is automatically discoverable 
 2. Green agent extracts accessibility snapshot, sends to purple agent
 3. Purple agent analyzes snapshot + task, returns action (click, type, etc.)
 4. Green agent executes action via MCP
-5. Repeat until task complete or max steps reached
+5. Repeat until task complete or max steps reached (default: 15)
 
 **Key files:**
 - `scenarios/web_browser/browser_judge.py` - Green agent (judge)
@@ -178,11 +208,13 @@ Any `.py` file in `scenarios/web_browser/agents/` is automatically discoverable 
 
 WABE uses a **two-stage evaluation** process. Understanding these metrics is important for interpreting leaderboard results.
 
+> **Important:** The `success_rate` is computed by an LLM judge analyzing screenshots - it is NOT simply `successful_tasks / total_tasks`. The `successful_tasks` field counts how many tasks the agent *attempted to complete* (by calling `finish`), while `success_rate` measures how many the LLM judge determined were *actually completed correctly*. These are different values! Future versions will rename these fields to avoid confusion.
+
 ### Stage 1: Browser Loop (Purple Agent Execution)
 
 The purple agent executes actions until it signals completion (via `finish` tool) or reaches `max_steps`. This produces:
 
-- **Browser loop success** - Did the purple agent call `finish`?
+- **Task completion signal** - Did the purple agent call `finish` or `browser_close`?
 - **Action history** - List of actions executed
 - **Screenshots** - Captured after each action
 
@@ -196,43 +228,54 @@ The LLM judge:
 3. Reviews screenshots scoring >= 3 along with action history
 4. Outputs `success` or `failure` for each task
 
+The `success_rate` is computed from these LLM judgments, not from `successful_tasks / total_tasks`.
+
+**Token Usage Warning:** The LLM evaluation passes multiple screenshots (one per step) to the judge model. With the default `max_steps=15`, this can consume significant tokens per task. If you hit rate limits (tokens per minute), increase the delay between evaluations in `src/eval/online_mind2web/run.py` (`INTER_TASK_DELAY`).
+
 ### Metrics in Results JSON
 
 | Metric | Set By | Description |
 |--------|--------|-------------|
-| `success_rate` | Green Agent (LLM eval) | **Primary metric.** Percentage of tasks the LLM judged as successfully completed. Range: 0-100. |
-| `successful_tasks` | Green Agent | Count of tasks where per-task `success` = true after LLM evaluation. |
+| `success_rate` | Green Agent (LLM eval) | **Primary metric.** Percentage of tasks the LLM judged as successfully completed. Computed by LLM analysis of screenshots, NOT from `successful_tasks / total_tasks`. Range: 0-100. |
+| `successful_tasks` | Green Agent | Count of tasks where the agent called `finish` or `browser_close` (i.e., the agent *claimed* to complete the task). This does NOT mean the LLM agreed the task was successful. |
 | `total_tasks` | Green Agent | Total number of tasks evaluated. |
-| Per-task `success` | Green Agent | LLM-evaluated success for each task. Falls back to browser loop result if LLM evaluation fails (e.g., no screenshots). |
+| Per-task `success` | Green Agent | LLM-evaluated success status. Falls back to browser loop completion if LLM evaluation fails (e.g., no screenshots). |
 
 ### Why Metrics Can Diverge
 
-The `success_rate` and `successful_tasks/total_tasks` can differ when:
+The `success_rate` and `successful_tasks` measure different things:
 
-1. **No screenshots captured** - LLM has nothing to evaluate, returns `success_rate: 0`, but browser loop may have set `success: true`
-2. **LLM disagrees with agent** - Agent thinks it finished, but LLM determines the task wasn't actually completed
+- `successful_tasks` = How many tasks the agent *tried* to complete (called `finish`)
+- `success_rate` = What percentage the LLM judge verified as *actually* completed
+
+They will often diverge because:
+
+1. **Agent claims success, LLM disagrees** - Agent called `finish` but didn't actually complete the task correctly
+2. **No screenshots captured** - LLM has nothing to evaluate, returns low `success_rate`, but agent may have called `finish`
 
 **Example of divergence:**
 ```json
 {
-  "success_rate": 0.0,        // LLM: no screenshots, can't verify
-  "successful_tasks": 1,      // Fallback: browser loop said "finished"
-  "total_tasks": 1
+  "success_rate": 5.88,          // LLM judge: only 1 task was actually completed correctly
+  "successful_tasks": 16,        // Agent called finish on 16 tasks
+  "total_tasks": 17
 }
 ```
 
+In this example, the agent *claimed* to complete 16/17 tasks, but the LLM judge determined only ~1 task (5.88%) was actually done correctly.
+
 ### Leaderboard Query
 
-The leaderboard should use `success_rate` directly (not `successful_tasks/total_tasks`):
+The leaderboard uses `success_rate` (LLM-judged) as the primary metric:
 
 ```sql
 SELECT 
   t.participants.white_agent AS id, 
-  ROUND(unnest.detail.success_rate, 1) AS "Pass Rate",
-  unnest.detail.successful_tasks AS "Passed",
+  ROUND(unnest.detail.success_rate, 1) AS "Success Rate",
+  unnest.detail.successful_tasks AS "Completed",
   unnest.detail.total_tasks AS "# Tasks"
 FROM results t, UNNEST(t.results) 
-ORDER BY "Pass Rate" DESC;
+ORDER BY "Success Rate" DESC;
 ```
 
 ### Per-Task Metrics
@@ -241,7 +284,7 @@ Each task in the `tasks` array includes:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `success` | bool | LLM-evaluated success (with browser loop fallback) |
+| `success` | bool | LLM-evaluated success status (with browser loop completion fallback) |
 | `steps_taken` | int | Number of actions executed |
 | `max_steps` | int | Maximum allowed steps |
 | `level` | string | Difficulty: `easy`, `medium`, `hard` |
