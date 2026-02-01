@@ -1,16 +1,20 @@
 # WABE - Web Agent Browser Evaluation
 
-A browser automation benchmark for evaluating AI agents on realistic web tasks. WABE uses the [AgentBeats](https://agentbeats.dev/) framework with the A2A (Agent-to-Agent) protocol for standardized, reproducible evaluation.
+A browser automation benchmark for evaluating AI agents on realistic web tasks. WABE "agentifies" the research from *Online-Mind2Web* ([arXiv:2504.01382](https://arxiv.org/abs/2504.01382)), requiring genuine navigation across 136+ live websites to prevent agents from simply "Googling" answers.
 
 Developed for the [UC Berkeley Agentic AI Course 2025](https://agenticai-learning.org/f25).
 
 ## Overview
 
-WABE evaluates how well AI agents can navigate websites and complete tasks like "Find theatre events in Las Vegas" or "Browse credit card options on Marriott.com". The system uses:
+WABE utilizes the **AAA (Agentified Agent Assessment)** framework to mirror real-world deployment by treating the benchmark itself as an active participant:
 
-- **A2A Protocol** - Standardized agent-to-agent communication
-- **MCP (Model Context Protocol)** - Browser automation via Playwright
-- **Accessibility Snapshots** - Structured representation of web pages for LLM reasoning
+* **Green Agent (Assessor):** The "referee" that manages the environment, selects tasks, and executes the **WebJudge** framework to score performance.
+* **White Agent (Participant):** The competitor under test, tasked with navigating complex sites (e.g., Marriott, sports standings).
+
+### Core Architecture
+* **A2A Protocol:** Standardized agent-to-agent communication for task management.
+* **MCP (Model Context Protocol):** Connects agents to tools like Playwright dynamically at runtime—no hardcoded tools.
+* **WebJudge Evaluation:** A 3-step logic using accessibility snapshots and screenshots to verify task completion (Key Point ID, Visual Scoring, and Final Outcome Judgment).
 
 ## Key Concepts
 
