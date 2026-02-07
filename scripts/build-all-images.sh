@@ -22,7 +22,7 @@ Options:
   --purple-only  Build only purple agent(s)
   --registry     Registry prefix (default: ghcr.io/hjerpe)
   --model        Model for purple agent (default: gemini-2.5-flash)
-  --eval-model   Eval model for green agent (default: gemini-2.5-flash)
+  --eval-model   Eval model for green agent (default: gemini-3-flash-preview)
   -l, --list     List available purple agents
   -h, --help     Show this help message
 
@@ -32,7 +32,7 @@ Examples:
   ./scripts/build-all-images.sh react_adk --push   # Build green + react_adk, push
   ./scripts/build-all-images.sh --green-only       # Build only green agent
   ./scripts/build-all-images.sh --purple-only      # Build all purple agents
-  ./scripts/build-all-images.sh --model gemini-2.5-flash --eval-model gemini-2.5-pro
+  ./scripts/build-all-images.sh --model gemini-2.5-flash --eval-model gemini-2.5-flash
 
 Images produced:
   Green:  wabe:latest

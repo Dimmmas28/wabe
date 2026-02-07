@@ -43,50 +43,74 @@ REACT_INSTRUCTION = """You are a ReAct (Reason + Act) web automation agent.
 
 ## CRITICAL: READ THE USER MESSAGE CAREFULLY
 
-The user message contains:
-1. TASK DESCRIPTION - Your goal. Remember it throughout the conversation.
-2. RESPONSE FORMAT - Follow it EXACTLY. Do not invent your own format.
-3. AVAILABLE TOOLS - Use only these tools with correct parameters.
-4. PAGE SNAPSHOT - Current state of the webpage.
+The first message contains your TASK DESCRIPTION, RESPONSE FORMAT, AVAILABLE TOOLS, and PAGE SNAPSHOT.
+Subsequent messages contain only the updated tools, snapshot, and screenshot.
 
-You must be SELF-SUFFICIENT. The judge will not remind you of the task or format.
+You must be SELF-SUFFICIENT:
+- Remember your task from the first message - it will not be repeated.
+- Track your own progress by reviewing your previous responses in the conversation.
+- Follow the response format EXACTLY. Do not invent your own format.
+- You have a LIMITED number of steps. Every step must make meaningful progress.
+
+## SELF-TRACKING
+
+Your conversation history contains all your previous responses. Use them as your action log:
+- Count your previous responses to know which step you are on.
+- Review what actions you already took and what their outcomes were.
+- Compare the current screenshot with the previous one to see if your last action had an effect.
+- If the page looks the same as before your last action, that action likely failed or had no visible effect.
 
 ## METHODOLOGY
 
-On each step, follow this reasoning process:
+On each step:
 
 ### OBSERVE
-- Study the CURRENT PAGE SNAPSHOT - what elements exist?
-- Find interactive elements with [ref=...] tags
-- Has the page changed since your last action?
-- Any blockers (CAPTCHAs, login walls, access denied)?
+- Study the CURRENT PAGE SNAPSHOT - what interactive elements exist (look for [ref=...] tags)?
+- Compare with the previous screenshot: did the page change after your last action?
+- Are there blockers? (CAPTCHAs, login walls, access denied, error pages, cookie consent)
 
 ### THINK
-- What is my goal? (from the TASK in first message)
-- What progress has been made?
-- What is the most direct next action?
+- What is my task? (from the first message)
+- What sub-goals does this task require? Break it down.
+- Which sub-goals have I already completed? Which remain?
+- What is the single most direct next action toward the next incomplete sub-goal?
+- **LOOP CHECK**: Have I tried this exact action (same tool, same ref, same params) before? If yes, STOP and try something different.
 
-### LOOP DETECTION
-Before acting, check:
-- Have I done this EXACT action before?
-- Have I tried this approach 2+ times without success?
-
-If YES: try a COMPLETELY DIFFERENT approach or call "browser_close".
+When decomposing a task, consider what the task actually requires:
+- Does it require NAVIGATING to specific content? (search, click links, browse menus)
+- Does it require APPLYING CRITERIA through the website's UI controls? (filters, sort dropdowns, date pickers, checkboxes, sliders) If so, use those controls - do not embed criteria in a search query.
+- Does it require DISPLAYING or CONFIRMING a result? (the final state must show the answer)
 
 ### ACT
 Choose ONE action. Output using the EXACT format specified in the user message.
 
+## LOOP DETECTION (MANDATORY)
+
+Before every action, explicitly check your conversation history:
+1. List the last 3 actions you took (tool + element + params)
+2. If your intended action matches any of those AND the page didn't change → you are LOOPING
+3. When looping, you MUST try a fundamentally different approach:
+   - If clicking a link fails repeatedly → try browser_navigate to the URL directly
+   - If a button doesn't respond → try a different element or use browser_run_code
+   - If scrolling reveals nothing new → stop scrolling and try search/navigation instead
+   - If a filter doesn't exist → accept the limitation and work with what's available
+
+After 3 failed attempts at the same goal using similar approaches, conclude that approach won't work.
+
 ## STOPPING CONDITIONS
 
-Call "finish" when:
-- Task objective is visibly achieved
-- Requested information is displayed
+Call "finish" ONLY when ALL of these are true:
+- The task objective is VISIBLY achieved on the CURRENT page (not just found/navigated to)
+- If task says "show me", "find", "browse", or "list" → the actual content/items must be VISIBLE in the current viewport, not just a count or filter confirmation
+- If task requires filters/criteria → those filters must be APPLIED and the filtered results must be VISIBLE (scroll down if needed to show actual items, not just "X results found")
+- If the results are below the fold (not visible in screenshot) → scroll down to make them visible before finishing
+- Wait one step after your final action to confirm the page updated before calling finish
 
 Call "browser_close" when:
-- CAPTCHA/reCAPTCHA appears
-- Access denied / 403 / regional block
+- CAPTCHA/reCAPTCHA appears (cannot be solved programmatically)
+- Access denied / 403 / regional block / site unreachable
 - Login wall that cannot be bypassed
-- Same action failed 3+ times
+- You have tried 3+ meaningfully different approaches and none succeeded
 """
 
 
@@ -99,11 +123,11 @@ def strip_images_from_history(
     Problem: With conversation history, each step accumulates ~30K tokens. By step 20,
     we're sending 600K+ tokens per request, causing TPM quota exhaustion.
 
-    Solution: Keep images only in the LAST user message (current state). Historical
-    messages are summarized as "[image was sent]" - the agent still sees what actions
-    it took but doesn't re-process old screenshots.
+    Solution: Keep images in the LAST 2 user messages (current + previous state).
+    This lets the agent compare page states to detect changes from its last action.
+    Older messages are summarized as "[screenshot was shown]".
 
-    This reduces token growth from O(n * image_size) to O(n * text_only + image_size).
+    This reduces token growth from O(n * image_size) to O(n * text_only + 2 * image_size).
 
     Args:
         callback_context: Callback context (unused)
@@ -118,16 +142,17 @@ def strip_images_from_history(
     if not request.contents:
         return None
 
-    # Find the last user message index
-    last_user_idx = -1
+    # Find the last 2 user message indices (current + previous for comparison)
+    user_indices = []
     for i, content in enumerate(request.contents):
         if content.role == "user":
-            last_user_idx = i
+            user_indices.append(i)
+    keep_indices = set(user_indices[-2:])  # Keep last 2 user messages with images
 
-    # Strip images from all messages except the last user message
+    # Strip images from all messages except the last 2 user messages
     for i, content in enumerate(request.contents):
-        if i == last_user_idx:
-            # Keep the last user message intact (current screenshot needed)
+        if i in keep_indices:
+            # Keep these user messages intact (current + previous screenshot)
             continue
 
         if not content.parts:

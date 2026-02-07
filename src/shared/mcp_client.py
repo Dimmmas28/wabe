@@ -106,6 +106,8 @@ class MCPBrowserClient:
             is_windows = platform.system() == "Windows"
 
             # Launch MCP server with unique user data directory
+            # Use 1280x720 viewport to ensure desktop layouts are rendered
+            # (many sites show mobile/narrow layouts below ~1024px width)
             self.server_process = subprocess.Popen(
                 [
                     "npx",
@@ -115,6 +117,8 @@ class MCPBrowserClient:
                     "chromium",
                     "--headless",  # Run in headless mode for Docker
                     "--no-sandbox",
+                    "--viewport-size",
+                    "1280,720",
                     "--user-data-dir",
                     self._user_data_dir,
                 ],

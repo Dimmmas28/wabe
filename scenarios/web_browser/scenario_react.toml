@@ -53,13 +53,6 @@ reference_length = 5
 level = "easy"
 
 [[tasks]]
-task_id = "f00e7accfb4a5e09680bdb326e6274ad"
-task = "Check the hourly forecast for Boston."
-website = "https://www.accuweather.com/"
-reference_length = 3
-level = "easy"
-
-[[tasks]]
 task_id = "e3ab665e01e7632ce33ac1aeca14aff6"
 task = "Find the next available dates for Alley Creek Camp."
 website = "https://www.recreation.gov/"
@@ -110,13 +103,6 @@ reference_length = 7
 level = "medium"
 
 [[tasks]]
-task_id = "7c09c2c7c87cf6bb1138701eb54284ea"
-task = "Find the comments for the most popular news in the past month under the Quantum Physics topic."
-website = "https://phys.org/"
-reference_length = 8
-level = "medium"
-
-[[tasks]]
 task_id = "7abdceee212151f187ee1a1744c57606"
 task = "Can you show me the page with the filing fee for a self-petitioned I-140 application?"
 website = "https://www.uscis.gov/"
@@ -129,13 +115,6 @@ task = "Find the newest digital trends report in the Finance & Insurance industr
 website = "https://www.statista.com/"
 reference_length = 8
 level = "medium"
-
-[[tasks]]
-task_id = "8fdec8eeffd3491e6526cc78c028120b"
-task = "See Nissan and Honda cars for sale near Kentwood, MI 49512 on CarMax."
-website = "https://www.carmax.com/"
-reference_length = 12
-level = "hard"
 
 [[tasks]]
 task_id = "1c3b747ae12ccee895745f82e3f2ef8a"
