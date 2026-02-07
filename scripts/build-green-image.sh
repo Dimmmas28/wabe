@@ -15,12 +15,12 @@ Build the Docker image for the WABE green agent (browser judge).
 Options:
   --push         Push image to registry after building
   --registry     Registry prefix (default: ghcr.io/hjerpe)
-  --eval-model   Eval model for green agent (default: gemini-2.5-flash)
+  --eval-model   Eval model for green agent (default: gemini-3-flash-preview)
   -h, --help     Show this help message
 
 Examples:
   ./scripts/build-green-image.sh                           # Build with defaults
-  ./scripts/build-green-image.sh --eval-model gemini-2.5-pro  # Custom model
+  ./scripts/build-green-image.sh --eval-model gemini-2.5-flash  # Custom model
   ./scripts/build-green-image.sh --push                    # Build and push
 
 Image produced:

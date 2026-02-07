@@ -5,6 +5,7 @@ import json
 import logging
 import multiprocessing
 import os
+import re
 import time
 
 from dotenv import load_dotenv
@@ -13,6 +14,22 @@ logger = logging.getLogger(__name__)
 
 # Delay between tasks within a worker process (seconds)
 INTER_TASK_DELAY = 60.0
+
+
+def get_step_number(filename: str) -> int:
+    """Extract step number from filename for sorting.
+
+    Args:
+        filename: Filename like 'step_000.jpg' or 'step_003_final.jpg'
+
+    Returns:
+        Integer step number, or 999999 for files without digits (sorted last)
+    """
+    matches = re.findall(r"\d+", filename)
+    if matches:
+        return int(matches[0])
+    return 999999  # Files without digits go last
+
 
 from eval.online_mind2web.methods.agenttrek_eval import *
 from eval.online_mind2web.methods.automomous_eval import *
@@ -80,7 +97,7 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
         if args.mode == "Autonomous_eval":
             for image in sorted(
                 os.listdir(trajectory_images_path),
-                key=lambda x: int(re.findall(r"\d+", x)[0]),
+                key=get_step_number,
             ):
                 screenshot_paths.append(os.path.join(trajectory_images_path, image))
             messages, text, system_msg = Autonomous_eval(
@@ -90,7 +107,7 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
         elif args.mode == "AgentTrek_eval":
             for image in sorted(
                 os.listdir(trajectory_images_path),
-                key=lambda x: int(re.findall(r"\d+", x)[0]),
+                key=get_step_number,
             ):
                 screenshot_paths.append(os.path.join(trajectory_images_path, image))
             messages, text, system_msg = AgentTrek_eval(
@@ -100,7 +117,7 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
         elif args.mode == "WebVoyager_eval":
             for image in sorted(
                 os.listdir(trajectory_images_path),
-                key=lambda x: int(re.findall(r"\d+", x)[0]),
+                key=get_step_number,
             ):
                 screenshot_paths.append(os.path.join(trajectory_images_path, image))
             messages, text, system_msg = WebVoyager_eval(
@@ -113,7 +130,7 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
 
             for image in sorted(
                 os.listdir(trajectory_images_path),
-                key=lambda x: int(re.findall(r"\d+", x)[0]),
+                key=get_step_number,
             ):
                 screenshot_paths.append(os.path.join(trajectory_images_path, image))
             messages, text, system_msg, record, key_points = asyncio.run(
@@ -131,7 +148,7 @@ def auto_eval(args, task_subset, final_predicted_labels, lock, model):
         elif args.mode == "WebJudge_general_eval":
             for image in sorted(
                 os.listdir(trajectory_images_path),
-                key=lambda x: int(re.findall(r"\d+", x)[0]),
+                key=get_step_number,
             ):
                 screenshot_paths.append(os.path.join(trajectory_images_path, image))
             messages, text, system_msg, record, key_points = asyncio.run(

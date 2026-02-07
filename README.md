@@ -208,13 +208,21 @@ Any `.py` file in `scenarios/web_browser/agents/` is automatically discoverable 
 
 ### Model Options
 
-By default, agents use `gemini-2.5-flash`. If you hit rate limits (429 RESOURCE_EXHAUSTED), you can use an alternative model:
+**Purple Agent (Participant):** By default uses `gemini-2.5-flash`. If you hit rate limits (429 RESOURCE_EXHAUSTED), you can use an alternative model:
 
 | Model | Use Case |
 |-------|----------|
-| `gemini-2.5-flash` | Default, best quality |
+| `gemini-2.5-flash` | Default for purple agent |
 | `gemini-2.0-flash` | Alternative if rate-limited on 2.5 |
 | `gemini-2.5-pro` | Higher quality, slower, more expensive |
+
+**Green Agent (Judge/Evaluator):** By default uses `gemini-3-flash-preview` for more accurate evaluation. Can be overridden via `EVAL_MODEL` environment variable or `--eval-model` flag.
+
+| Model | Use Case |
+|-------|----------|
+| `gemini-3-flash-preview` | Default for evaluation |
+| `gemini-2.5-flash` | Fallback if 3.0 unavailable |
+| `gemini-2.5-pro` | Higher quality evaluation |
 
 **Note:** The `reliability` agent doesn't use an LLM (deterministic replay), so `--model` has no effect on it.
 
@@ -418,6 +426,19 @@ uv run python scripts/validate_scenario.py -v scenarios/web_browser/scenario_ful
 # Run all quality checks
 ./scripts/quality-check.sh
 ```
+
+## Modifications from Original Online-Mind2Web
+
+This repository includes the following modifications to the original evaluation code:
+
+- **WebJudge score parsing fix**: Enhanced score extraction in `src/eval/online_mind2web/methods/webjudge_online_mind2web.py` to handle various LLM response formats. The original code expected exactly `"Score"` with specific casing and would crash with "list index out of range" if the LLM judge returned a different format (e.g., `"score:"`, `"**Score**:"`) or if the response was truncated/malformed due to rate limiting or model refusal. The fix now:
+  - Searches for multiple score marker formats (case-insensitive)
+  - Defaults to score 0 with a warning instead of crashing
+  - Logs informative warnings to help diagnose evaluation issues
+
+- **Screenshot sorting fix**: Added a helper function `get_step_number()` in `src/eval/online_mind2web/run.py` to safely extract step numbers from filenames. The original regex-based sorting would fail for files without digits.
+
+- **Viewport size configuration**: Added `--viewport-size 1280,720` to the MCP Playwright server launch in `src/shared/mcp_client.py`. This ensures desktop layouts are rendered consistently (many sites show mobile/narrow layouts below ~1024px width, hiding filter panels and sidebars that agents need to see).
 
 ## License
 

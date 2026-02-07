@@ -11,7 +11,7 @@ class Config(BaseModel):
     api_key: str
     mode: str = "WebJudge_Online_Mind2Web_eval"
     trajectories_dir: str
-    model: str = "gemini-2.5-flash"
+    model: str = "gemini-3-flash-preview"  # More capable model for accurate judging
     output_path: str
     score_threshold: int = 3
 

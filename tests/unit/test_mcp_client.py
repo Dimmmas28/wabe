@@ -62,9 +62,13 @@ class TestMCPBrowserClientLifecycle:
                     "--headless",
                     "--no-sandbox",
                 ]
+                # Check that viewport-size is included for proper desktop layout rendering
+                assert "--viewport-size" in call_args
+                assert "1280,720" in call_args
                 # Check that --user-data-dir is included for browser isolation
                 assert "--user-data-dir" in call_args
-                assert len(call_args) == 9  # Base args + --user-data-dir + path
+                # Base args + --viewport-size + size + --user-data-dir + path
+                assert len(call_args) == 11
 
     @pytest.mark.asyncio
     async def test_start_fails_if_server_exits_early(self, client):

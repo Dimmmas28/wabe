@@ -150,20 +150,59 @@ The potentially important snapshots of the webpage in the agent's trajectory and
     record = []
     pattern = r"[1-5]"
     for response, image_path in zip(image_responses, images_path):
+        thought = ""  # Initialize to avoid unbound variable
+        score = "0"  # Initialize score
         try:
-            score_text = response.split("Score")[1]
-            thought = (
-                response.split("**Reasoning**:")[-1]
-                .strip()
-                .lstrip("\n")
-                .split("\n\n")[0]
-                .replace("\n", " ")
-            )
-            score = re.findall(pattern, score_text)[0]
+            # Try to extract score using multiple possible formats
+            # The LLM might use "Score", "score", "Score:", "**Score**:", etc.
+            response_lower = response.lower()
+            score_text = None
+
+            # Try different score markers
+            for marker in ["**score**:", "score:", "score"]:
+                if marker in response_lower:
+                    # Find the position and extract text after it
+                    idx = response_lower.find(marker)
+                    score_text = response[idx + len(marker) :]
+                    break
+
+            if score_text is None:
+                print(
+                    f"Warning: No score marker found in response: {response[:150]}..."
+                )
+            else:
+                score_matches = re.findall(pattern, score_text)
+                if score_matches:
+                    score = score_matches[0]
+                else:
+                    print(
+                        f"Warning: No valid score (1-5) found after marker: {score_text[:100]}..."
+                    )
+
+            # Extract thought/reasoning
+            if "**reasoning**:" in response_lower:
+                thought = (
+                    response.split("**Reasoning**:")[-1]
+                    .strip()
+                    .lstrip("\n")
+                    .split("\n\n")[0]
+                    .replace("\n", " ")
+                )
+            elif "reasoning:" in response_lower:
+                thought = (
+                    response.lower()
+                    .split("reasoning:")[-1]
+                    .strip()
+                    .lstrip("\n")
+                    .split("\n\n")[0]
+                    .replace("\n", " ")
+                )
+
             record.append({"Response": response, "Score": int(score)})
         except Exception as e:
             print(f"Error processing response: {e}")
-            score = 0
+            score = "0"
+            thought = ""
             record.append({"Response": response, "Score": 0})
 
         if int(score) >= score_threshold:
